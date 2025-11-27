@@ -17,7 +17,9 @@
     "GLOWMATCH_ADMIN_EMAIL": "admin@glowmatch.com",
     "GLOWMATCH_ADMIN_PASSWORD": "Adm1n!Glow2025",
     "GLOWMATCH_DB_PATH": "/tmp/data.db"
+    "FRONTEND_URL=https":"https://glowmatch-ebon.vercel.app"
   }
 }
+
 
 
