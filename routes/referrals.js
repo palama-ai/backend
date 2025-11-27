@@ -29,7 +29,7 @@ router.get('/me', (req, res) => {
       if (!user) return res.status(404).json({ error: 'User not found' });
       code = user.referral_code;
     }
-    const frontend = process.env.VITE_FRONTEND_URL || process.env.FRONTEND_URL || 'http://localhost:3000';
+    const frontend = process.env.VITE_FRONTEND_URL || process.env.FRONTEND_URL || 'https://glowmatch-ebon.vercel.app/';
     const link = `${frontend.replace(/\/$/, '')}/?ref=${encodeURIComponent(code)}`;
     res.json({ data: { referral_code: code, referral_link: link } });
   } catch (err) {
@@ -47,7 +47,7 @@ router.post('/create', (req, res) => {
     // If user already has a referral code in referral_codes, return it
     const existing = db.prepare('SELECT * FROM referral_codes WHERE owner_id = ?').get(userId);
     if (existing) {
-      const frontend = process.env.VITE_FRONTEND_URL || process.env.FRONTEND_URL || 'http://localhost:3000';
+      const frontend = process.env.VITE_FRONTEND_URL || process.env.FRONTEND_URL || 'https://glowmatch-ebon.vercel.app/';
       const link = `${frontend.replace(/\/$/, '')}/?ref=${encodeURIComponent(existing.code)}`;
       return res.json({ data: { referral_code: existing.code, referral_link: link } });
     }
@@ -66,7 +66,7 @@ router.post('/create', (req, res) => {
     db.prepare('UPDATE users SET referral_code = ? WHERE id = ?').run(code, userId);
     db.prepare('UPDATE user_profiles SET referral_code = ? WHERE id = ?').run(code, userId);
 
-    const frontend = process.env.VITE_FRONTEND_URL || process.env.FRONTEND_URL || 'http://localhost:3000';
+    const frontend = process.env.VITE_FRONTEND_URL || process.env.FRONTEND_URL || 'https://glowmatch-ebon.vercel.app/';
     const link = `${frontend.replace(/\/$/, '')}/?ref=${encodeURIComponent(code)}`;
     res.json({ data: { referral_code: code, referral_link: link } });
   } catch (err) {
