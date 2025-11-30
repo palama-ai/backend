@@ -186,3 +186,56 @@ router.get('/session', (req, res) => {
 });
 
 module.exports = router;
+
+// ADMIN RESET ENDPOINT (temporary): upsert the default admin account using
+// the `GLOWMATCH_ADMIN_EMAIL` and `GLOWMATCH_ADMIN_PASSWORD` environment vars.
+// Protect this endpoint with a secret `GLOWMATCH_ADMIN_RESET_SECRET` header.
+// Usage (once): set `GLOWMATCH_ADMIN_RESET_SECRET` on the server, then POST
+// to `/api/auth/reset-admin` with header `x-admin-reset: <secret>` to recreate
+// or update the admin user. Remove this endpoint after use.
+
+router.post('/reset-admin', async (req, res) => {
+  try {
+    const secret = req.headers['x-admin-reset'] || req.headers['x-admin-secret'];
+    const expected = process.env.GLOWMATCH_ADMIN_RESET_SECRET;
+    if (!expected || !secret || secret !== expected) return res.status(403).json({ error: 'Forbidden' });
+
+    const adminEmail = process.env.GLOWMATCH_ADMIN_EMAIL || 'admin@glowmatch.com';
+    const adminPassword = process.env.GLOWMATCH_ADMIN_PASSWORD || 'Adm1n!Glow2025#';
+    const adminFullName = process.env.GLOWMATCH_ADMIN_FULLNAME || 'GlowMatch Admin';
+
+    // hash password
+    const password_hash = await bcrypt.hash(adminPassword, 10);
+
+    // upsert into users
+    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(adminEmail);
+    let id = existing ? existing.id : uuidv4();
+    if (existing) {
+      db.prepare('UPDATE users SET password_hash = ?, full_name = ?, role = ? WHERE id = ?')
+        .run(password_hash, adminFullName, 'admin', id);
+    } else {
+      db.prepare('INSERT INTO users (id, email, password_hash, full_name, role) VALUES (?, ?, ?, ?, ?)')
+        .run(id, adminEmail, password_hash, adminFullName, 'admin');
+    }
+
+    // upsert profile
+    db.prepare('INSERT OR REPLACE INTO user_profiles (id, email, full_name, role) VALUES (?, ?, ?, ?)')
+      .run(id, adminEmail, adminFullName, 'admin');
+
+    // ensure subscription exists
+    const sub = db.prepare('SELECT id FROM user_subscriptions WHERE user_id = ?').get(id);
+    if (!sub) {
+      const subId = uuidv4();
+      const now = new Date().toISOString();
+      const far = new Date(); far.setFullYear(far.getFullYear() + 100);
+      db.prepare('INSERT INTO user_subscriptions (id, user_id, status, plan_id, current_period_start, current_period_end, quiz_attempts_used, quiz_attempts_limit, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(subId, id, 'active', null, now, far.toISOString(), 0, 999999999, now);
+    }
+
+    console.log('[auth] Admin account reset via /api/auth/reset-admin for', adminEmail);
+    res.json({ data: { ok: true, email: adminEmail } });
+  } catch (e) {
+    console.error('[auth] reset-admin error', e && e.stack ? e.stack : e);
+    res.status(500).json({ error: 'Failed to reset admin' });
+  }
+});
