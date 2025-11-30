@@ -11,15 +11,9 @@
       "src": "(.*)",
       "dest": "index.js"
     }
-  ],
-  "env": {
-    "GLOWMATCH_JWT_SECRET": "s9f9hsdf9hsdf09hsdf09h",
-    "GLOWMATCH_ADMIN_EMAIL": "admin@glowmatch.com",
-    "GLOWMATCH_ADMIN_PASSWORD": "Adm1n!Glow2025",
-    "GLOWMATCH_DB_PATH": "/tmp/data.db"
-    "FRONTEND_URL=https":"https://glowmatch-ebon.vercel.app"
-  }
+  ]
 }
+
 
 
 
