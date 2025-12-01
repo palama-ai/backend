@@ -1,11 +1,57 @@
 const path = require('path');
+const fs = require('fs');
 const Database = require('better-sqlite3');
 const bcrypt = require('bcrypt');
 const { v4: uuidv4 } = require('uuid');
 
-const DB_PATH = process.env.GLOWMATCH_DB_PATH || path.join(__dirname, 'data.db');
+// Use environment variable or fallback to /tmp for serverless environments
+let DB_PATH = process.env.GLOWMATCH_DB_PATH;
 
-const db = new Database(DB_PATH);
+// If no path specified, use /tmp in production, ./data.db in development
+if (!DB_PATH) {
+  DB_PATH = process.env.NODE_ENV === 'production' ? '/tmp/data.db' : path.join(__dirname, 'data.db');
+} else {
+  // If an env-provided path is relative and we're in production (serverless),
+  // prefer the writable /tmp path to avoid SQLITE_CANTOPEN caused by attempting
+  // to open files in the read-only deployment bundle.
+  if (process.env.NODE_ENV === 'production') {
+    try {
+      if (!path.isAbsolute(DB_PATH) || DB_PATH.startsWith('.') ) {
+        console.warn('[db] Relative GLOWMATCH_DB_PATH ignored in production, using /tmp/data.db for persistence');
+        DB_PATH = '/tmp/data.db';
+      }
+    } catch (e) {
+      DB_PATH = '/tmp/data.db';
+    }
+  }
+}
+
+// Ensure directory exists for database file
+const dbDir = path.dirname(DB_PATH);
+try {
+  if (!fs.existsSync(dbDir)) {
+    fs.mkdirSync(dbDir, { recursive: true });
+  }
+} catch (err) {
+  console.warn(`[db] Could not create directory ${dbDir}:`, err.message);
+}
+
+let db;
+try {
+  db = new Database(DB_PATH);
+  console.log(`[db] Database opened at: ${DB_PATH}`);
+} catch (err) {
+  console.error(`[db] Failed to open database at ${DB_PATH}:`, err && err.message ? err.message : err);
+  console.warn('[db] Falling back to in-memory database. Changes will NOT be persisted across restarts.');
+  try {
+    db = new Database(':memory:');
+    console.log('[db] Opened in-memory database');
+  } catch (memErr) {
+    console.error('[db] Failed to open in-memory database as fallback:', memErr && memErr.message ? memErr.message : memErr);
+    // rethrow the original error if we cannot open any database
+    throw err;
+  }
+}
 
 function init() {
   // users table
