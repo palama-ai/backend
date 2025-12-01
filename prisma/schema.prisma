@@ -1,0 +1,163 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Prisma schema generated to match the existing SQLite schema in the project.
+// Keep UUIDs as strings mapped to PostgreSQL UUID type where possible.
+
+model User {
+  id             String   @id @db.Uuid
+  email          String   @unique
+  password_hash  String
+  full_name      String? 
+  role           String   @default("user")
+  referral_code  String?  
+  referrer_id    String?  @db.Uuid
+  disabled       Int      @default(0)
+  deleted        Int      @default(0)
+  status_message String?
+  created_at     DateTime @default(now())
+
+  profile        UserProfile?
+  subscriptions  UserSubscription[]
+  quizAttempts   QuizAttempt[]
+  referrals      Referral[]        @relation("Referrer")
+  referralCodes  ReferralCode[]    @relation("Owner")
+  notifications  UserNotification[]
+  siteSessions   SiteSession[]
+  pageViews      PageView[]
+}
+
+model UserProfile {
+  id        String   @id @db.Uuid
+  email     String?
+  full_name String?
+  role      String?
+  updated_at DateTime @default(now())
+  referral_code String?
+
+  user User @relation(fields: [id], references: [id])
+}
+
+model UserSubscription {
+  id String @id @db.Uuid
+  user_id String @db.Uuid
+  status String?
+  plan_id String?
+  current_period_start DateTime?
+  current_period_end DateTime?
+  quiz_attempts_used Int? @default(0)
+  quiz_attempts_limit Int? @default(999999999)
+  last_attempt_date DateTime?
+  updated_at DateTime? @default(now())
+
+  user User @relation(fields: [user_id], references: [id])
+}
+
+model QuizAutosave {
+  user_id String @id @db.Uuid
+  quiz_data String?
+  updated_at DateTime? @default(now())
+
+  user User @relation(fields: [user_id], references: [id])
+}
+
+model QuizAttempt {
+  id String @id @db.Uuid
+  user_id String? @db.Uuid
+  subscription_id String?
+  quiz_data String?
+  results String?
+  has_image_analysis Int? @default(0)
+  attempt_date DateTime? @default(now())
+  report_url String?
+  report_storage_path String?
+  analysis String?
+
+  user User? @relation(fields: [user_id], references: [id])
+}
+
+model Blog {
+  id String @id @db.Uuid
+  slug String? @unique
+  title String?
+  excerpt String?
+  content String?
+  image_url String?
+  published Int? @default(0)
+  created_at DateTime? @default(now())
+  updated_at DateTime? @default(now())
+}
+
+model Referral {
+  id String @id @db.Uuid
+  referrer_id String?
+  referred_id String?
+  created_at DateTime? @default(now())
+
+  referrer User? @relation("Referrer", fields: [referrer_id], references: [id])
+}
+
+model ReferralCode {
+  id String @id @db.Uuid
+  code String @unique
+  owner_id String?
+  uses_count Int? @default(0)
+  created_at DateTime? @default(now())
+  last_used_at DateTime?
+  last_10_reached_at DateTime?
+
+  owner User? @relation("Owner", fields: [owner_id], references: [id])
+}
+
+model Notification {
+  id String @id @db.Uuid
+  title String?
+  body String?
+  sender_id String?
+  target_all Int? @default(0)
+  created_at DateTime? @default(now())
+}
+
+model UserNotification {
+  id String @id @db.Uuid
+  notification_id String?
+  user_id String?
+  read Int? @default(0)
+  created_at DateTime? @default(now())
+}
+
+model SiteSession {
+  session_id String @id
+  user_id String?
+  path String?
+  started_at DateTime? @default(now())
+  last_ping_at DateTime? @default(now())
+  duration_seconds Int?
+  created_at DateTime? @default(now())
+  updated_at DateTime? @default(now())
+
+  user User? @relation(fields: [user_id], references: [id])
+}
+
+model PageView {
+  id String @id @db.Uuid
+  session_id String?
+  user_id String?
+  path String?
+  created_at DateTime? @default(now())
+}
+
+model ContactMessage {
+  id String @id @db.Uuid
+  name String?
+  email String?
+  message String?
+  read Int? @default(0)
+  created_at DateTime? @default(now())
+}
