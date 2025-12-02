@@ -1,12 +1,12 @@
 const express = require('express');
 const router = express.Router();
-const { db } = require('../db');
+const { sql } = require('../db');
 
 // PUBLIC: Get published blogs (no auth required)
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
     console.log('[backend/routes/blogs] GET / - fetching published blogs');
-    const blogs = db.prepare('SELECT * FROM blogs WHERE published = 1 ORDER BY created_at DESC').all();
+    const blogs = await sql`SELECT * FROM blogs WHERE published = 1 ORDER BY created_at DESC`;
     console.log('[backend/routes/blogs] GET / - found', blogs.length, 'published blogs');
     res.json({ data: blogs });
   } catch (e) { 
