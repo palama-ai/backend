@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { analyze } = require('../lib/aiProviders');
 const { generateRoutine } = require('../lib/aiProviders');
-const { db } = require('../db');
+const { sql } = require('../db');
 
 // POST /api/analysis
 // body: { quizData, images, model, attemptId }
@@ -35,9 +35,7 @@ router.post('/', async (req, res) => {
       try {
         // Ensure we store a JSON string in the DB (avoid [object Object])
         const analysisText = result?.text ? (typeof result.text === 'object' ? JSON.stringify(result.text) : String(result.text)) : null;
-        const now = new Date().toISOString();
-        const stmt = db.prepare('UPDATE quiz_attempts SET analysis = ?, attempt_date = attempt_date WHERE id = ?');
-        stmt.run(analysisText, attemptId);
+        await sql`UPDATE quiz_attempts SET analysis = ${analysisText}, attempt_date = attempt_date WHERE id = ${attemptId}`;
       } catch (e) {
         console.error('Failed to attach analysis to attempt:', e);
       }
