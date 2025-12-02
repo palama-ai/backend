@@ -2,20 +2,22 @@
 // If the server is started from the `backend` folder, prefer loading the
 // `.env` file from the project root so keys placed there are picked up.
 const path = require('path');
+const fs = require('fs');
 try {
-  const fs = require('fs');
   const dotenv = require('dotenv');
   const backendEnv = path.join(__dirname, '.env');
   const rootEnv = path.join(__dirname, '..', '.env');
   if (fs.existsSync(backendEnv)) {
+    console.log('[backend] Loading .env from backend folder');
     dotenv.config({ path: backendEnv });
   } else if (fs.existsSync(rootEnv)) {
+    console.log('[backend] Loading .env from root folder');
     dotenv.config({ path: rootEnv });
   } else {
-    // fallback to default behavior
+    console.log('[backend] No specific .env found, using default');
     dotenv.config();
   }
-} catch (e) { /* dotenv optional */ }
+} catch (e) { console.error('[backend] Error loading .env:', e); }
 
 const express = require('express');
 const cors = require('cors');
@@ -40,7 +42,7 @@ const app = express();
 app.use(cors());
 // simple request logger to aid debugging
 app.use((req, res, next) => {
-  try { console.log('[backend] incoming request', req.method, req.originalUrl); } catch (e) {}
+  try { console.log('[backend] incoming request', req.method, req.originalUrl); } catch (e) { }
   next();
 });
 // Increase JSON body limit to allow base64 image uploads from the frontend
@@ -51,9 +53,17 @@ try {
   console.log('[backend] OPENAI_API_KEY present:', !!process.env.OPENAI_API_KEY);
   console.log('[backend] GEMINI_API_KEY present:', !!process.env.GEMINI_API_KEY);
   console.log('[backend] GOOGLE_VISION_API_KEY present:', !!process.env.GOOGLE_VISION_API_KEY);
-} catch (e) {}
+} catch (e) { }
 
-init();
+// Initialize database asynchronously
+let dbReady = false;
+init().then(() => {
+  dbReady = true;
+  console.log('[backend] Database initialized successfully');
+}).catch(err => {
+  console.error('[backend] Database initialization failed:', err);
+  // Continue starting the server even if DB init fails (for debugging)
+});
 
 app.use('/api/auth', authRoutes);
 app.use('/api/profile', profileRoutes);
@@ -67,6 +77,15 @@ app.use('/api/events', eventsRoutes);
 app.use('/api/contact', contactRoutes);
 app.use('/api/referrals', referralsRoutes);
 app.use('/api/notifications', notificationsRoutes);
+
+// Basic API root - helpful for health checks and to avoid "Cannot GET /api" responses
+app.get('/api', (req, res) => {
+  try {
+    res.json({ ok: true, message: 'GlowMatch API', routes: '/__routes', db_ready: dbReady });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e) });
+  }
+});
 
 // debug: list registered routes for quick inspection
 app.get('/__routes', (req, res) => {
@@ -90,8 +109,23 @@ app.get('/__routes', (req, res) => {
 // Serve uploaded reports as static files
 app.use('/reports', express.static(path.join(__dirname, 'uploads', 'reports')));
 
-app.get('/', (req, res) => res.json({ ok: true, msg: 'GlowMatch backend running' }));
+// Serve static files from the React app build directory
+const buildPath = path.join(__dirname, '../build');
+if (fs.existsSync(buildPath)) {
+  app.use(express.static(buildPath));
+  // Catch-all route for SPA - MUST use app.use() not app.get('*') in Express v5
+  app.use((req, res) => {
+    res.sendFile(path.join(buildPath, 'index.html'));
+  });
+} else {
+  app.get('/', (req, res) => res.json({ ok: true, msg: 'GlowMatch backend running' }));
+}
 
-app.listen(PORT, () => {
-  console.log(`GlowMatch backend listening on http://localhost:${PORT}`);
-});
+// Only start the server if running directly (not imported)
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`GlowMatch backend listening on port ${PORT}`);
+  });
+}
+
+module.exports = app;
