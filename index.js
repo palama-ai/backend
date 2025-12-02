@@ -82,12 +82,21 @@ function ensureDbInitialized() {
 
 // Middleware to ensure DB is initialized before handling requests
 app.use(async (req, res, next) => {
+  // Health check routes don't need DB
+  if (req.path === '/api' || req.path === '/__routes') {
+    return next();
+  }
+  
   try {
     await ensureDbInitialized();
     next();
   } catch (err) {
     console.error('[backend] DB initialization error during request:', err);
-    next(); // Continue anyway for non-DB routes
+    return res.status(503).json({ 
+      error: 'Database not ready', 
+      message: 'The database is still initializing. Please try again in a moment.',
+      details: err.message 
+    });
   }
 });
 
@@ -107,7 +116,14 @@ app.use('/api/notifications', notificationsRoutes);
 // Basic API root - helpful for health checks and to avoid "Cannot GET /api" responses
 app.get('/api', (req, res) => {
   try {
-    res.json({ ok: true, message: 'GlowMatch API', routes: '/__routes', db_ready: dbReady });
+    res.json({ 
+      ok: true, 
+      message: 'GlowMatch API', 
+      routes: '/__routes', 
+      db_ready: dbReady,
+      db_initializing: dbInitializing,
+      database_url_present: !!process.env.DATABASE_URL
+    });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e) });
   }
