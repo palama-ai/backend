@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const jwt = require('jsonwebtoken');
-const { db } = require('../db');
+const { sql } = require('../db');
 
 const JWT_SECRET = process.env.GLOWMATCH_JWT_SECRET || 'dev_secret_change_me';
 
@@ -32,10 +32,10 @@ function requireAdmin(req, res, next) {
 }
 
 // Admin: list notifications
-router.get('/admin', requireAdmin, (req, res) => {
+router.get('/admin', requireAdmin, async (req, res) => {
   try {
     console.log('[notifications] admin list request by', req.admin?.id);
-    const rows = db.prepare('SELECT * FROM notifications ORDER BY created_at DESC LIMIT 200').all();
+    const rows = await sql`SELECT * FROM notifications ORDER BY created_at DESC LIMIT 200`;
     console.log('[notifications] returning', rows.length, 'notifications');
     res.json({ data: rows });
   } catch (e) {
@@ -46,31 +46,36 @@ router.get('/admin', requireAdmin, (req, res) => {
 
 // Admin: create/send notification
 // body: { title, body, target: 'all' | 'users', user_ids: [] }
-router.post('/admin', requireAdmin, (req, res) => {
+router.post('/admin', requireAdmin, async (req, res) => {
   try {
     const { title, body: msgBody, target, user_ids } = req.body;
     if (!title || !msgBody) return res.status(400).json({ error: 'title and body required' });
     const id = uuidv4();
     const sender = req.admin.id;
     const targetAll = target === 'all' ? 1 : 0;
-    db.prepare('INSERT INTO notifications (id, title, body, sender_id, target_all, created_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)')
-      .run(id, title, msgBody, sender, targetAll);
+    
+    await sql`
+      INSERT INTO notifications (id, title, body, sender_id, target_all, created_at)
+      VALUES (${id}, ${title}, ${msgBody}, ${sender}, ${targetAll}, NOW())
+    `;
 
     // create per-user mappings
     if (targetAll) {
-      const users = db.prepare("SELECT id FROM users WHERE role != 'admin'").all();
-      const ins = db.prepare('INSERT INTO user_notifications (id, notification_id, user_id, read, created_at) VALUES (?, ?, ?, 0, CURRENT_TIMESTAMP)');
-      const insertMany = db.transaction((rows) => {
-        for (const u of rows) ins.run(uuidv4(), id, u.id);
-      });
-      insertMany(users);
+      const users = await sql`SELECT id FROM users WHERE role != 'admin'`;
+      for (const u of users) {
+        await sql`
+          INSERT INTO user_notifications (id, notification_id, user_id, read, created_at)
+          VALUES (${uuidv4()}, ${id}, ${u.id}, 0, NOW())
+        `;
+      }
       console.log(`[notifications] created notification ${id} and linked to ${users.length} users`);
     } else if (Array.isArray(user_ids) && user_ids.length > 0) {
-      const ins = db.prepare('INSERT INTO user_notifications (id, notification_id, user_id, read, created_at) VALUES (?, ?, ?, 0, CURRENT_TIMESTAMP)');
-      const insertMany = db.transaction((rows) => {
-        for (const uid of rows) ins.run(uuidv4(), id, uid);
-      });
-      insertMany(user_ids);
+      for (const uid of user_ids) {
+        await sql`
+          INSERT INTO user_notifications (id, notification_id, user_id, read, created_at)
+          VALUES (${uuidv4()}, ${id}, ${uid}, 0, NOW())
+        `;
+      }
       console.log(`[notifications] created notification ${id} and linked to ${user_ids.length} explicit users`);
     }
 
@@ -82,18 +87,19 @@ router.post('/admin', requireAdmin, (req, res) => {
 });
 
 // User: get my notifications
-router.get('/me', (req, res) => {
+router.get('/me', async (req, res) => {
   try {
     const payload = authFromHeader(req);
     if (!payload || !payload.id) return res.status(401).json({ error: 'Unauthorized' });
     const userId = payload.id;
     console.log('[notifications] fetch for user', userId);
-    const rows = db.prepare(
-      `SELECT un.id as link_id, n.id as notification_id, n.title, n.body, n.sender_id, un.read, un.created_at
-       FROM user_notifications un
-       JOIN notifications n ON n.id = un.notification_id
-       WHERE un.user_id = ? ORDER BY un.created_at DESC LIMIT 200`
-    ).all(userId);
+    
+    const rows = await sql`
+      SELECT un.id as link_id, n.id as notification_id, n.title, n.body, n.sender_id, un.read, un.created_at
+      FROM user_notifications un
+      JOIN notifications n ON n.id = un.notification_id
+      WHERE un.user_id = ${userId} ORDER BY un.created_at DESC LIMIT 200
+    `;
     console.log('[notifications] returning', rows.length, 'rows for', userId);
     res.json({ data: rows });
   } catch (e) {
@@ -103,13 +109,13 @@ router.get('/me', (req, res) => {
 });
 
 // User: mark notification read
-router.post('/me/:linkId/read', (req, res) => {
+router.post('/me/:linkId/read', async (req, res) => {
   try {
     const payload = authFromHeader(req);
     if (!payload || !payload.id) return res.status(401).json({ error: 'Unauthorized' });
     const linkId = req.params.linkId;
     console.log('[notifications] mark read request by user', payload.id, 'link', linkId);
-    db.prepare('UPDATE user_notifications SET read = 1 WHERE id = ?').run(linkId);
+    await sql`UPDATE user_notifications SET read = 1 WHERE id = ${linkId}`;
     res.json({ data: { id: linkId } });
   } catch (e) {
     console.error('notifications mark read error', e);
