@@ -15,6 +15,5 @@
   "env": {
     "NODE_ENV": "production",
     "GLOWMATCH_DB_PATH": "/tmp/data.db"
-  },
-  "envFile": ".env.production"
+  }
 }
