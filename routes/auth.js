@@ -3,7 +3,7 @@ const router = express.Router();
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
-const { db } = require('../db');
+const { sql } = require('../db');
 
 const JWT_SECRET = process.env.GLOWMATCH_JWT_SECRET || 'dev_secret_change_me';
 const TOKEN_EXPIRY = '30d';
@@ -17,8 +17,9 @@ router.post('/signup', async (req, res) => {
     const { email, password, fullName, referralCode } = req.body;
     if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
 
-    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
-    if (existing) return res.status(409).json({ error: 'User already exists' });
+    // Check if user already exists
+    const existing = await sql`SELECT id FROM users WHERE email = ${email}`;
+    if (existing && existing.length > 0) return res.status(409).json({ error: 'User already exists' });
 
     const id = uuidv4();
     const password_hash = await bcrypt.hash(password, 10);
@@ -32,25 +33,33 @@ router.post('/signup', async (req, res) => {
     // If referralCode provided, try to find referrer
     let referrer = null;
     if (referralCode) {
-      referrer = db.prepare('SELECT id FROM users WHERE referral_code = ?').get(referralCode);
+      const result = await sql`SELECT id FROM users WHERE referral_code = ${referralCode}`;
+      referrer = result && result.length > 0 ? result[0] : null;
     }
 
-    db.prepare('INSERT INTO users (id, email, password_hash, full_name, role, referral_code, referrer_id) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(id, email, password_hash, fullName || null, 'user', myReferralCode, referrer ? referrer.id : null);
+    // Insert new user
+    await sql`
+      INSERT INTO users (id, email, password_hash, full_name, role, referral_code, referrer_id)
+      VALUES (${id}, ${email}, ${password_hash}, ${fullName || null}, 'user', ${myReferralCode}, ${referrer ? referrer.id : null})
+    `;
 
     // create profile mirror
-    db.prepare('INSERT OR REPLACE INTO user_profiles (id, email, full_name, role, referral_code) VALUES (?, ?, ?, ?, ?)')
-      .run(id, email, fullName || null, 'user', myReferralCode);
+    await sql`
+      INSERT INTO user_profiles (id, email, full_name, role, referral_code)
+      VALUES (${id}, ${email}, ${fullName || null}, 'user', ${myReferralCode})
+    `;
 
     // persist canonical referral code in referral_codes table to prevent duplicates
     try {
-      const existingCode = db.prepare('SELECT id FROM referral_codes WHERE code = ?').get(myReferralCode);
-      if (!existingCode) {
-        db.prepare('INSERT INTO referral_codes (id, code, owner_id, uses_count, created_at) VALUES (?, ?, ?, 0, CURRENT_TIMESTAMP)')
-          .run(uuidv4(), myReferralCode, id);
+      const existingCode = await sql`SELECT id FROM referral_codes WHERE code = ${myReferralCode}`;
+      if (!existingCode || existingCode.length === 0) {
+        await sql`
+          INSERT INTO referral_codes (id, code, owner_id, uses_count, created_at)
+          VALUES (${uuidv4()}, ${myReferralCode}, ${id}, 0, NOW())
+        `;
       } else {
         // ensure owner_id is set for this code
-        db.prepare('UPDATE referral_codes SET owner_id = ? WHERE code = ?').run(id, myReferralCode);
+        await sql`UPDATE referral_codes SET owner_id = ${id} WHERE code = ${myReferralCode}`;
       }
     } catch (e) {
       console.warn('Failed to persist referral code to referral_codes table', e && e.message);
@@ -62,42 +71,48 @@ router.post('/signup', async (req, res) => {
     const subId = uuidv4();
     const now = new Date().toISOString();
     const far = new Date(); far.setFullYear(far.getFullYear() + 1);
-    db.prepare('INSERT INTO user_subscriptions (id, user_id, status, plan_id, current_period_start, current_period_end, quiz_attempts_used, quiz_attempts_limit, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(subId, id, 'active', null, now, far.toISOString(), 0, initialAttempts, now);
+    
+    await sql`
+      INSERT INTO user_subscriptions (id, user_id, status, plan_id, current_period_start, current_period_end, quiz_attempts_used, quiz_attempts_limit, updated_at)
+      VALUES (${subId}, ${id}, 'active', null, ${now}, ${far.toISOString()}, 0, ${initialAttempts}, ${now})
+    `;
 
     // If referred, record referral and grant referrer bonus (2 attempts) subject to cap: max 10 referrals per 15 days
     if (referralCode) {
       // Prefer referral_codes table to find the owner
-      const codeRow = db.prepare('SELECT * FROM referral_codes WHERE code = ?').get(referralCode);
+      const codeRow = await sql`SELECT * FROM referral_codes WHERE code = ${referralCode}`;
       let referrerId = referrer ? referrer.id : null;
-      if (codeRow) referrerId = codeRow.owner_id;
+      if (codeRow && codeRow.length > 0) referrerId = codeRow[0].owner_id;
 
       if (referrerId) {
         const refId = uuidv4();
-        db.prepare('INSERT INTO referrals (id, referrer_id, referred_id, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)')
-          .run(refId, referrerId, id);
+        await sql`
+          INSERT INTO referrals (id, referrer_id, referred_id, created_at)
+          VALUES (${refId}, ${referrerId}, ${id}, NOW())
+        `;
 
         // update referral_codes uses_count/last_used_at if applicable
-        if (codeRow) {
-          db.prepare('UPDATE referral_codes SET uses_count = uses_count + 1, last_used_at = CURRENT_TIMESTAMP WHERE id = ?').run(codeRow.id);
+        if (codeRow && codeRow.length > 0) {
+          const codeId = codeRow[0].id;
+          await sql`UPDATE referral_codes SET uses_count = uses_count + 1, last_used_at = NOW() WHERE id = ${codeId}`;
           // reload to get updated uses_count
-          const updatedCode = db.prepare('SELECT * FROM referral_codes WHERE id = ?').get(codeRow.id);
+          const updatedCode = await sql`SELECT * FROM referral_codes WHERE id = ${codeId}`;
           // if the code just reached 10 uses, mark the timestamp
-          if ((updatedCode.uses_count || 0) >= 10 && !updatedCode.last_10_reached_at) {
-            db.prepare('UPDATE referral_codes SET last_10_reached_at = CURRENT_TIMESTAMP WHERE id = ?').run(codeRow.id);
+          if (updatedCode && updatedCode.length > 0 && (updatedCode[0].uses_count || 0) >= 10 && !updatedCode[0].last_10_reached_at) {
+            await sql`UPDATE referral_codes SET last_10_reached_at = NOW() WHERE id = ${codeId}`;
           }
         }
 
         // count referrals in last 15 days for this referrer
         const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 15);
         const cutoffISO = cutoff.toISOString();
-        const recentCountRow = db.prepare('SELECT COUNT(*) as c FROM referrals WHERE referrer_id = ? AND created_at >= ?').get(referrerId, cutoffISO);
-        const recentCount = (recentCountRow && recentCountRow.c) ? recentCountRow.c : 0;
+        const recentCountRow = await sql`SELECT COUNT(*) as c FROM referrals WHERE referrer_id = ${referrerId} AND created_at >= ${cutoffISO}`;
+        const recentCount = (recentCountRow && recentCountRow.length > 0 && recentCountRow[0].c) ? recentCountRow[0].c : 0;
 
         // Check code cooldown: if the referral code previously hit 10 uses less than 15 days ago, do not grant until 15 days have passed
         let codeCooldownActive = false;
-        if (codeRow && codeRow.last_10_reached_at) {
-          const last10 = new Date(codeRow.last_10_reached_at);
+        if (codeRow && codeRow.length > 0 && codeRow[0].last_10_reached_at) {
+          const last10 = new Date(codeRow[0].last_10_reached_at);
           const diffMs = Date.now() - last10.getTime();
           const diffDays = diffMs / (1000 * 60 * 60 * 24);
           if (diffDays < 15) codeCooldownActive = true;
@@ -107,16 +122,20 @@ router.post('/signup', async (req, res) => {
         if (recentCount < 10 && !codeCooldownActive) {
           // grant +2 attempts to referrer
           // find or create subscription for referrer
-          let refSub = db.prepare('SELECT * FROM user_subscriptions WHERE user_id = ? LIMIT 1').get(referrerId);
+          const refSubResult = await sql`SELECT * FROM user_subscriptions WHERE user_id = ${referrerId} LIMIT 1`;
+          let refSub = refSubResult && refSubResult.length > 0 ? refSubResult[0] : null;
+          
           if (!refSub) {
             const newSubId = uuidv4();
             const now2 = new Date().toISOString();
             const far2 = new Date(); far2.setFullYear(far2.getFullYear() + 1);
-            db.prepare('INSERT INTO user_subscriptions (id, user_id, status, plan_id, current_period_start, current_period_end, quiz_attempts_used, quiz_attempts_limit, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-              .run(newSubId, referrerId, 'active', null, now2, far2.toISOString(), 0, 2, now2);
+            await sql`
+              INSERT INTO user_subscriptions (id, user_id, status, plan_id, current_period_start, current_period_end, quiz_attempts_used, quiz_attempts_limit, updated_at)
+              VALUES (${newSubId}, ${referrerId}, 'active', null, ${now2}, ${far2.toISOString()}, 0, 2, ${now2})
+            `;
           } else {
             try {
-              db.prepare('UPDATE user_subscriptions SET quiz_attempts_limit = quiz_attempts_limit + 2, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(refSub.id);
+              await sql`UPDATE user_subscriptions SET quiz_attempts_limit = quiz_attempts_limit + 2, updated_at = NOW() WHERE id = ${refSub.id}`;
             } catch (e) {
               console.warn('Failed to update referrer subscription attempts', e && e.message);
             }
@@ -138,8 +157,10 @@ router.post('/login', async (req, res) => {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
 
-    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
-    if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+    const userResult = await sql`SELECT * FROM users WHERE email = ${email}`;
+    if (!userResult || userResult.length === 0) return res.status(401).json({ error: 'Invalid credentials' });
+    
+    const user = userResult[0];
 
     // If user is deleted, block login and return an explanatory message
     if (user.deleted) {
@@ -165,15 +186,18 @@ router.post('/login', async (req, res) => {
 });
 
 // simple session check
-router.get('/session', (req, res) => {
+router.get('/session', async (req, res) => {
   try {
     const auth = req.headers.authorization;
     if (!auth) return res.json({ data: { session: null } });
 
     const token = auth.replace('Bearer ', '');
     const payload = jwt.verify(token, JWT_SECRET);
-    const user = db.prepare('SELECT id, email, full_name, role, disabled, deleted, status_message FROM users WHERE id = ?').get(payload.id);
-    if (!user) return res.json({ data: { session: null } });
+    
+    const userResult = await sql`SELECT id, email, full_name, role, disabled, deleted, status_message FROM users WHERE id = ${payload.id}`;
+    if (!userResult || userResult.length === 0) return res.json({ data: { session: null } });
+
+    const user = userResult[0];
 
     // If deleted, return null session to force re-login and surface message via client (client may call a debug endpoint)
     if (user.deleted) return res.status(200).json({ data: { session: null, deleted: true, message: 'لقد تم حذف حسابك. راسل support لمعرفة المزيد.' } });
@@ -208,28 +232,32 @@ router.post('/reset-admin', async (req, res) => {
     const password_hash = await bcrypt.hash(adminPassword, 10);
 
     // upsert into users
-    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(adminEmail);
-    let id = existing ? existing.id : uuidv4();
-    if (existing) {
-      db.prepare('UPDATE users SET password_hash = ?, full_name = ?, role = ? WHERE id = ?')
-        .run(password_hash, adminFullName, 'admin', id);
+    const existingResult = await sql`SELECT id FROM users WHERE email = ${adminEmail}`;
+    let id = existingResult && existingResult.length > 0 ? existingResult[0].id : uuidv4();
+    
+    if (existingResult && existingResult.length > 0) {
+      await sql`UPDATE users SET password_hash = ${password_hash}, full_name = ${adminFullName}, role = 'admin' WHERE id = ${id}`;
     } else {
-      db.prepare('INSERT INTO users (id, email, password_hash, full_name, role) VALUES (?, ?, ?, ?, ?)')
-        .run(id, adminEmail, password_hash, adminFullName, 'admin');
+      await sql`INSERT INTO users (id, email, password_hash, full_name, role) VALUES (${id}, ${adminEmail}, ${password_hash}, ${adminFullName}, 'admin')`;
     }
 
     // upsert profile
-    db.prepare('INSERT OR REPLACE INTO user_profiles (id, email, full_name, role) VALUES (?, ?, ?, ?)')
-      .run(id, adminEmail, adminFullName, 'admin');
+    await sql`
+      INSERT INTO user_profiles (id, email, full_name, role) 
+      VALUES (${id}, ${adminEmail}, ${adminFullName}, 'admin')
+      ON CONFLICT (id) DO UPDATE SET email = ${adminEmail}, full_name = ${adminFullName}, role = 'admin'
+    `;
 
     // ensure subscription exists
-    const sub = db.prepare('SELECT id FROM user_subscriptions WHERE user_id = ?').get(id);
-    if (!sub) {
+    const subResult = await sql`SELECT id FROM user_subscriptions WHERE user_id = ${id}`;
+    if (!subResult || subResult.length === 0) {
       const subId = uuidv4();
       const now = new Date().toISOString();
       const far = new Date(); far.setFullYear(far.getFullYear() + 100);
-      db.prepare('INSERT INTO user_subscriptions (id, user_id, status, plan_id, current_period_start, current_period_end, quiz_attempts_used, quiz_attempts_limit, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-        .run(subId, id, 'active', null, now, far.toISOString(), 0, 999999999, now);
+      await sql`
+        INSERT INTO user_subscriptions (id, user_id, status, plan_id, current_period_start, current_period_end, quiz_attempts_used, quiz_attempts_limit, updated_at)
+        VALUES (${subId}, ${id}, 'active', null, ${now}, ${far.toISOString()}, 0, 999999999, ${now})
+      `;
     }
 
     console.log('[auth] Admin account reset via /api/auth/reset-admin for', adminEmail);
