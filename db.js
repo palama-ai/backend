@@ -2,23 +2,33 @@ const bcrypt = require('bcrypt');
 const { v4: uuidv4 } = require('uuid');
 const { neon } = require('@neondatabase/serverless');
 
-// Initialize Neon SQL client
-const DATABASE_URL = process.env.DATABASE_URL;
-if (!DATABASE_URL) {
-  console.error('[db] ERROR: DATABASE_URL environment variable not set');
-  throw new Error('DATABASE_URL environment variable is required');
+// Initialize Neon SQL client lazily to handle missing env vars gracefully
+let sql = null;
+
+function initializeSQL() {
+  if (sql) return sql;
+  
+  const DATABASE_URL = process.env.DATABASE_URL;
+  if (!DATABASE_URL) {
+    console.error('[db] ERROR: DATABASE_URL environment variable not set');
+    console.error('[db] Available env vars:', Object.keys(process.env).filter(k => k.includes('DB') || k.includes('DATABASE')));
+    throw new Error('DATABASE_URL environment variable is required');
+  }
+  
+  sql = neon(DATABASE_URL);
+  console.log('[db] Neon PostgreSQL client initialized');
+  return sql;
 }
-
-const sql = neon(DATABASE_URL);
-console.log('[db] Neon PostgreSQL client initialized');
-
 
 async function init() {
   try {
     console.log('[db] Starting PostgreSQL schema initialization...');
+    
+    // Lazy initialize SQL client
+    const sqlClient = initializeSQL();
 
     // Create all tables with proper PostgreSQL syntax
-    await sql`
+    await sqlClient`
       CREATE TABLE IF NOT EXISTS users (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         email VARCHAR(255) UNIQUE NOT NULL,
@@ -36,10 +46,10 @@ async function init() {
     console.log('[db] Created/verified users table');
 
     // Create indexes for users
-    await sql`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`;
-    await sql`CREATE INDEX IF NOT EXISTS idx_users_referral_code ON users(referral_code)`;
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`;
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_users_referral_code ON users(referral_code)`;
 
-    await sql`
+    await sqlClient`
       CREATE TABLE IF NOT EXISTS user_profiles (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         email VARCHAR(255),
@@ -51,9 +61,9 @@ async function init() {
     `;
     console.log('[db] Created/verified user_profiles table');
 
-    await sql`CREATE INDEX IF NOT EXISTS idx_user_profiles_email ON user_profiles(email)`;
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_user_profiles_email ON user_profiles(email)`;
 
-    await sql`
+    await sqlClient`
       CREATE TABLE IF NOT EXISTS user_subscriptions (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         user_id UUID REFERENCES users(id) ON DELETE CASCADE,
@@ -69,9 +79,9 @@ async function init() {
     `;
     console.log('[db] Created/verified user_subscriptions table');
 
-    await sql`CREATE INDEX IF NOT EXISTS idx_user_subscriptions_user_id ON user_subscriptions(user_id)`;
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_user_subscriptions_user_id ON user_subscriptions(user_id)`;
 
-    await sql`
+    await sqlClient`
       CREATE TABLE IF NOT EXISTS quiz_autosave (
         user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
         quiz_data TEXT,
@@ -80,7 +90,7 @@ async function init() {
     `;
     console.log('[db] Created/verified quiz_autosave table');
 
-    await sql`
+    await sqlClient`
       CREATE TABLE IF NOT EXISTS quiz_attempts (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         user_id UUID REFERENCES users(id) ON DELETE CASCADE,
@@ -96,10 +106,10 @@ async function init() {
     `;
     console.log('[db] Created/verified quiz_attempts table');
 
-    await sql`CREATE INDEX IF NOT EXISTS idx_quiz_attempts_user_id ON quiz_attempts(user_id)`;
-    await sql`CREATE INDEX IF NOT EXISTS idx_quiz_attempts_attempt_date ON quiz_attempts(attempt_date)`;
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_quiz_attempts_user_id ON quiz_attempts(user_id)`;
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_quiz_attempts_attempt_date ON quiz_attempts(attempt_date)`;
 
-    await sql`
+    await sqlClient`
       CREATE TABLE IF NOT EXISTS blogs (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         slug VARCHAR(255) UNIQUE,
@@ -114,10 +124,10 @@ async function init() {
     `;
     console.log('[db] Created/verified blogs table');
 
-    await sql`CREATE INDEX IF NOT EXISTS idx_blogs_slug ON blogs(slug)`;
-    await sql`CREATE INDEX IF NOT EXISTS idx_blogs_published ON blogs(published)`;
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_blogs_slug ON blogs(slug)`;
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_blogs_published ON blogs(published)`;
 
-    await sql`
+    await sqlClient`
       CREATE TABLE IF NOT EXISTS referrals (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         referrer_id UUID REFERENCES users(id) ON DELETE CASCADE,
@@ -127,10 +137,10 @@ async function init() {
     `;
     console.log('[db] Created/verified referrals table');
 
-    await sql`CREATE INDEX IF NOT EXISTS idx_referrals_referrer_id ON referrals(referrer_id)`;
-    await sql`CREATE INDEX IF NOT EXISTS idx_referrals_created_at ON referrals(created_at)`;
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_referrals_referrer_id ON referrals(referrer_id)`;
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_referrals_created_at ON referrals(created_at)`;
 
-    await sql`
+    await sqlClient`
       CREATE TABLE IF NOT EXISTS referral_codes (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         code VARCHAR(50) UNIQUE,
@@ -143,10 +153,10 @@ async function init() {
     `;
     console.log('[db] Created/verified referral_codes table');
 
-    await sql`CREATE INDEX IF NOT EXISTS idx_referral_codes_code ON referral_codes(code)`;
-    await sql`CREATE INDEX IF NOT EXISTS idx_referral_codes_owner_id ON referral_codes(owner_id)`;
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_referral_codes_code ON referral_codes(code)`;
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_referral_codes_owner_id ON referral_codes(owner_id)`;
 
-    await sql`
+    await sqlClient`
       CREATE TABLE IF NOT EXISTS notifications (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         title VARCHAR(500),
@@ -158,9 +168,9 @@ async function init() {
     `;
     console.log('[db] Created/verified notifications table');
 
-    await sql`CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at)`;
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at)`;
 
-    await sql`
+    await sqlClient`
       CREATE TABLE IF NOT EXISTS user_notifications (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         notification_id UUID REFERENCES notifications(id) ON DELETE CASCADE,
@@ -171,10 +181,10 @@ async function init() {
     `;
     console.log('[db] Created/verified user_notifications table');
 
-    await sql`CREATE INDEX IF NOT EXISTS idx_user_notifications_user_id ON user_notifications(user_id)`;
-    await sql`CREATE INDEX IF NOT EXISTS idx_user_notifications_notification_id ON user_notifications(notification_id)`;
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_user_notifications_user_id ON user_notifications(user_id)`;
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_user_notifications_notification_id ON user_notifications(notification_id)`;
 
-    await sql`
+    await sqlClient`
       CREATE TABLE IF NOT EXISTS site_sessions (
         session_id VARCHAR(255) PRIMARY KEY,
         user_id UUID REFERENCES users(id) ON DELETE SET NULL,
@@ -188,7 +198,7 @@ async function init() {
     `;
     console.log('[db] Created/verified site_sessions table');
 
-    await sql`
+    await sqlClient`
       CREATE TABLE IF NOT EXISTS page_views (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         session_id VARCHAR(255) REFERENCES site_sessions(session_id) ON DELETE SET NULL,
@@ -199,10 +209,10 @@ async function init() {
     `;
     console.log('[db] Created/verified page_views table');
 
-    await sql`CREATE INDEX IF NOT EXISTS idx_page_views_user_id ON page_views(user_id)`;
-    await sql`CREATE INDEX IF NOT EXISTS idx_page_views_session_id ON page_views(session_id)`;
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_page_views_user_id ON page_views(user_id)`;
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_page_views_session_id ON page_views(session_id)`;
 
-    await sql`
+    await sqlClient`
       CREATE TABLE IF NOT EXISTS contact_messages (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         name VARCHAR(255),
@@ -221,20 +231,20 @@ async function init() {
       const adminFullName = process.env.GLOWMATCH_ADMIN_FULLNAME || 'GlowMatch Admin';
 
       // Check if admin already exists
-      const existing = await sql`SELECT id FROM users WHERE email = ${adminEmail}`;
+      const existing = await sqlClient`SELECT id FROM users WHERE email = ${adminEmail}`;
       
       if (!existing || existing.length === 0) {
         const id = uuidv4();
         const password_hash = await bcrypt.hash(adminPassword, 10);
 
         // Insert admin user
-        await sql`
+        await sqlClient`
           INSERT INTO users (id, email, password_hash, full_name, role)
           VALUES (${id}, ${adminEmail}, ${password_hash}, ${adminFullName}, 'admin')
         `;
 
         // Insert admin profile
-        await sql`
+        await sqlClient`
           INSERT INTO user_profiles (id, email, full_name, role)
           VALUES (${id}, ${adminEmail}, ${adminFullName}, 'admin')
         `;
@@ -245,7 +255,7 @@ async function init() {
         const far = new Date();
         far.setFullYear(far.getFullYear() + 100);
 
-        await sql`
+        await sqlClient`
           INSERT INTO user_subscriptions (id, user_id, status, plan_id, current_period_start, current_period_end, quiz_attempts_used, quiz_attempts_limit, updated_at)
           VALUES (${subId}, ${id}, 'active', null, ${now}, ${far.toISOString()}, 0, 999999999, ${now})
         `;
@@ -263,6 +273,10 @@ async function init() {
   }
 }
 
-module.exports = { sql, init };
+module.exports = { 
+  sql: initializeSQL,
+  init 
+};
+
 
 
