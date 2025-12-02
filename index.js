@@ -39,7 +39,31 @@ const notificationsRoutes = require('./routes/notifications');
 const PORT = process.env.PORT || 4000;
 
 const app = express();
-app.use(cors());
+
+// Configure CORS properly
+const allowedOrigins = [
+  'http://localhost:4028',
+  'http://localhost:3000',
+  'http://localhost:5173',
+  process.env.FRONTEND_URL || 'https://glowimatch.vercel.app',
+  'https://glowimatch.vercel.app',
+  'https://glowimatch-ebon.vercel.app'
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('CORS not allowed'));
+    }
+  },
+  credentials: true
+}));
+
 // simple request logger to aid debugging
 app.use((req, res, next) => {
   try { console.log('[backend] incoming request', req.method, req.originalUrl); } catch (e) { }
@@ -92,6 +116,19 @@ app.use(async (req, res, next) => {
     next();
   } catch (err) {
     console.error('[backend] DB initialization error during request:', err);
+    
+    // Check if this is a DATABASE_URL missing error
+    const isDatabaseUrlMissing = err.message && err.message.includes('DATABASE_URL');
+    
+    if (isDatabaseUrlMissing) {
+      return res.status(503).json({ 
+        error: 'Database configuration missing', 
+        message: 'DATABASE_URL environment variable is not set in Vercel project settings.',
+        help: 'Go to Vercel Dashboard > Project Settings > Environment Variables and add DATABASE_URL',
+        details: err.message 
+      });
+    }
+    
     return res.status(503).json({ 
       error: 'Database not ready', 
       message: 'The database is still initializing. Please try again in a moment.',
@@ -145,6 +182,26 @@ app.get('/__routes', (req, res) => {
     // safe stringify for unknown thrown values (could be undefined)
     const msg = (e && (e.message || e.stack)) ? (e.message || e.stack) : String(e);
     res.status(500).json({ error: msg });
+  }
+});
+
+// Health check with detailed database status
+app.get('/api/health', (req, res) => {
+  try {
+    const dbUrl = process.env.DATABASE_URL;
+    const hasDbUrl = !!dbUrl;
+    const dbUrlMasked = hasDbUrl ? dbUrl.substring(0, 20) + '...' : 'NOT SET';
+    
+    res.json({
+      status: dbReady ? 'healthy' : 'initializing',
+      db_ready: dbReady,
+      db_initializing: dbInitializing,
+      database_url_present: hasDbUrl,
+      database_url_preview: dbUrlMasked,
+      timestamp: new Date().toISOString()
+    });
+  } catch (e) {
+    res.status(500).json({ status: 'error', error: String(e) });
   }
 });
 
