@@ -31,7 +31,7 @@ router.get('/me', async (req, res) => {
       code = user[0].referral_code;
     }
     
-    const frontend = process.env.VITE_FRONTEND_URL || process.env.FRONTEND_URL || '';
+    const frontend = process.env.VITE_FRONTEND_URL || process.env.FRONTEND_URL || 'https://glowimatch.vercel.app';
     const link = frontend ? `${frontend.replace(/\/$/, '')}/?ref=${encodeURIComponent(code)}` : `/?ref=${encodeURIComponent(code)}`;
     res.json({ data: { referral_code: code, referral_link: link } });
   } catch (err) {
@@ -50,7 +50,7 @@ router.post('/create', async (req, res) => {
     // If user already has a referral code in referral_codes, return it
     const existing = await sql`SELECT * FROM referral_codes WHERE owner_id = ${userId}`;
     if (existing && existing.length > 0) {
-      const frontend = process.env.VITE_FRONTEND_URL || process.env.FRONTEND_URL || '';
+      const frontend = process.env.VITE_FRONTEND_URL || process.env.FRONTEND_URL || 'https://glowimatch.vercel.app';
       const link = frontend ? `${frontend.replace(/\/$/, '')}/?ref=${encodeURIComponent(existing[0].code)}` : `/?ref=${encodeURIComponent(existing[0].code)}`;
       return res.json({ data: { referral_code: existing[0].code, referral_link: link } });
     }
@@ -69,7 +69,7 @@ router.post('/create', async (req, res) => {
     await sql`UPDATE users SET referral_code = ${code} WHERE id = ${userId}`;
     await sql`UPDATE user_profiles SET referral_code = ${code} WHERE id = ${userId}`;
 
-    const frontend = process.env.VITE_FRONTEND_URL || process.env.FRONTEND_URL || '';
+    const frontend = process.env.VITE_FRONTEND_URL || process.env.FRONTEND_URL || 'https://glowimatch.vercel.app';
     const link = frontend ? `${frontend.replace(/\/$/, '')}/?ref=${encodeURIComponent(code)}` : `/?ref=${encodeURIComponent(code)}`;
     res.json({ data: { referral_code: code, referral_link: link } });
   } catch (err) {
