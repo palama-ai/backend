@@ -3,11 +3,11 @@ const { v4: uuidv4 } = require('uuid');
 const { neon } = require('@neondatabase/serverless');
 
 // Initialize Neon SQL client lazily to handle missing env vars gracefully
-let sql = null;
+let sqlClient = null;
 let initError = null;
 
-function initializeSQL() {
-  if (sql) return sql;
+function getSQLClient() {
+  if (sqlClient) return sqlClient;
   if (initError) throw initError;
   
   try {
@@ -44,9 +44,9 @@ function initializeSQL() {
     }
     
     console.log('[db] DATABASE_URL found, initializing Neon client...');
-    sql = neon(DATABASE_URL);
+    sqlClient = neon(DATABASE_URL);
     console.log('[db] ✅ Neon PostgreSQL client initialized successfully');
-    return sql;
+    return sqlClient;
   } catch (err) {
     console.error('[db] Failed to initialize SQL client:', err.message);
     initError = err;
@@ -54,12 +54,19 @@ function initializeSQL() {
   }
 }
 
+// Create a proxy function that acts as a tagged template literal
+// When routes do: await sql`SELECT...`, this function gets called
+function sql(strings, ...values) {
+  const client = getSQLClient();
+  return client(strings, ...values);
+}
+
 async function init() {
   try {
     console.log('[db] Starting PostgreSQL schema initialization...');
     
     // Lazy initialize SQL client
-    const sqlClient = initializeSQL();
+    const sqlClient = getSQLClient();
 
     // Create all tables with proper PostgreSQL syntax
     await sqlClient`
@@ -308,7 +315,7 @@ async function init() {
 }
 
 module.exports = { 
-  sql: initializeSQL,
+  sql,
   init 
 };
 
