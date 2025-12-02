@@ -11,28 +11,41 @@ function initializeSQL() {
   if (initError) throw initError;
   
   try {
-    // Try DATABASE_URL first, then fall back to alternatives
-    let DATABASE_URL = process.env.DATABASE_URL;
+    // Log all environment variables that might contain the database URL
+    const allKeys = Object.keys(process.env);
+    console.log('[db] Environment check:');
+    console.log('[db]   - Total env vars:', allKeys.length);
+    console.log('[db]   - DATABASE_URL:', !!process.env.DATABASE_URL);
+    console.log('[db]   - NEON_CONNECTION_STRING:', !!process.env.NEON_CONNECTION_STRING);
+    console.log('[db]   - DB keys:', allKeys.filter(k => k.toUpperCase().includes('DB')));
+    console.log('[db]   - DATABASE keys:', allKeys.filter(k => k.toUpperCase().includes('DATABASE')));
     
-    // Log what we're looking for
-    console.log('[db] Checking for DATABASE_URL...');
-    console.log('[db] DATABASE_URL present:', !!DATABASE_URL);
+    // Try DATABASE_URL, NEON_CONNECTION_STRING, or other alternatives
+    let DATABASE_URL = process.env.DATABASE_URL || 
+                       process.env.NEON_CONNECTION_STRING ||
+                       process.env.DATABASE_URL_PROD;
     
     if (!DATABASE_URL) {
-      const availableVars = Object.keys(process.env).filter(k => 
+      console.error('[db] CRITICAL: DATABASE_URL not found in environment');
+      console.error('[db] Vercel requires DATABASE_URL to be set in Project Settings > Environment Variables');
+      console.error('[db] Steps to fix:');
+      console.error('[db]   1. Go to your Vercel project dashboard');
+      console.error('[db]   2. Navigate to Settings > Environment Variables');
+      console.error('[db]   3. Add a new variable: DATABASE_URL = postgresql://...');
+      console.error('[db]   4. Redeploy the project');
+      
+      const availableVars = allKeys.filter(k => 
         k.includes('DB') || k.includes('DATABASE') || k.includes('NEON') || k.includes('SQL')
       );
-      console.error('[db] ERROR: DATABASE_URL not found');
-      console.error('[db] Available env vars:', availableVars);
-      console.error('[db] Note: All env vars:', Object.keys(process.env).sort());
       
-      const msg = `DATABASE_URL environment variable not set. Available: ${availableVars.join(', ')}`;
+      const msg = `DATABASE_URL not configured. Available DB-related vars: ${availableVars.join(', ') || 'none'}`;
       initError = new Error(msg);
       throw initError;
     }
     
+    console.log('[db] DATABASE_URL found, initializing Neon client...');
     sql = neon(DATABASE_URL);
-    console.log('[db] Neon PostgreSQL client initialized successfully');
+    console.log('[db] ✅ Neon PostgreSQL client initialized successfully');
     return sql;
   } catch (err) {
     console.error('[db] Failed to initialize SQL client:', err.message);
