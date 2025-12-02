@@ -4,20 +4,41 @@ const { neon } = require('@neondatabase/serverless');
 
 // Initialize Neon SQL client lazily to handle missing env vars gracefully
 let sql = null;
+let initError = null;
 
 function initializeSQL() {
   if (sql) return sql;
+  if (initError) throw initError;
   
-  const DATABASE_URL = process.env.DATABASE_URL;
-  if (!DATABASE_URL) {
-    console.error('[db] ERROR: DATABASE_URL environment variable not set');
-    console.error('[db] Available env vars:', Object.keys(process.env).filter(k => k.includes('DB') || k.includes('DATABASE')));
-    throw new Error('DATABASE_URL environment variable is required');
+  try {
+    // Try DATABASE_URL first, then fall back to alternatives
+    let DATABASE_URL = process.env.DATABASE_URL;
+    
+    // Log what we're looking for
+    console.log('[db] Checking for DATABASE_URL...');
+    console.log('[db] DATABASE_URL present:', !!DATABASE_URL);
+    
+    if (!DATABASE_URL) {
+      const availableVars = Object.keys(process.env).filter(k => 
+        k.includes('DB') || k.includes('DATABASE') || k.includes('NEON') || k.includes('SQL')
+      );
+      console.error('[db] ERROR: DATABASE_URL not found');
+      console.error('[db] Available env vars:', availableVars);
+      console.error('[db] Note: All env vars:', Object.keys(process.env).sort());
+      
+      const msg = `DATABASE_URL environment variable not set. Available: ${availableVars.join(', ')}`;
+      initError = new Error(msg);
+      throw initError;
+    }
+    
+    sql = neon(DATABASE_URL);
+    console.log('[db] Neon PostgreSQL client initialized successfully');
+    return sql;
+  } catch (err) {
+    console.error('[db] Failed to initialize SQL client:', err.message);
+    initError = err;
+    throw err;
   }
-  
-  sql = neon(DATABASE_URL);
-  console.log('[db] Neon PostgreSQL client initialized');
-  return sql;
 }
 
 async function init() {
