@@ -106,35 +106,44 @@ function ensureDbInitialized() {
 
 // Middleware to ensure DB is initialized before handling requests
 app.use(async (req, res, next) => {
-  // Health check routes don't need DB
-  if (req.path === '/api' || req.path === '/__routes' || req.path === '/api/health' || req.path === '/favicon.ico') {
+  // Routes that don't need DB initialization
+  const skipDbInit = ['/api', '/__routes', '/favicon.ico'];
+  const isSkipPath = skipDbInit.some(path => req.path === path || req.path.startsWith(path + '/'));
+  
+  // Also skip health check endpoint
+  if (isSkipPath || req.path === '/api/health') {
     return next();
   }
   
-  try {
-    await ensureDbInitialized();
-    next();
-  } catch (err) {
-    console.error('[backend] DB initialization error during request:', err);
-    
-    // Check if this is a DATABASE_URL missing error
-    const isDatabaseUrlMissing = err.message && err.message.includes('DATABASE_URL');
-    
-    if (isDatabaseUrlMissing) {
+  // For /api/* endpoints, always ensure DB is initialized
+  if (req.path.startsWith('/api/')) {
+    try {
+      await ensureDbInitialized();
+      return next();
+    } catch (err) {
+      console.error('[backend] DB initialization error during request:', err);
+      
+      // Check if this is a DATABASE_URL missing error
+      const isDatabaseUrlMissing = err.message && err.message.includes('DATABASE_URL');
+      
+      if (isDatabaseUrlMissing) {
+        return res.status(503).json({ 
+          error: 'Database configuration missing', 
+          message: 'DATABASE_URL environment variable is not set in Vercel project settings.',
+          help: 'Go to Vercel Dashboard > Project Settings > Environment Variables and add DATABASE_URL',
+          details: err.message 
+        });
+      }
+      
       return res.status(503).json({ 
-        error: 'Database configuration missing', 
-        message: 'DATABASE_URL environment variable is not set in Vercel project settings.',
-        help: 'Go to Vercel Dashboard > Project Settings > Environment Variables and add DATABASE_URL',
+        error: 'Database not ready', 
+        message: 'The database is still initializing. Please try again in a moment.',
         details: err.message 
       });
     }
-    
-    return res.status(503).json({ 
-      error: 'Database not ready', 
-      message: 'The database is still initializing. Please try again in a moment.',
-      details: err.message 
-    });
   }
+  
+  next();
 });
 
 app.use('/api/auth', authRoutes);
