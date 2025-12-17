@@ -14,8 +14,11 @@ function signToken(user) {
 
 router.post('/signup', async (req, res) => {
   try {
-    const { email, password, fullName, referralCode } = req.body;
+    const { email, password, fullName, referralCode, accountType } = req.body;
     if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
+
+    // Validate accountType - only allow 'user' or 'seller'
+    const role = accountType === 'seller' ? 'seller' : 'user';
 
     // Check if user already exists
     const existing = await sql`SELECT id FROM users WHERE email = ${email}`;
@@ -37,16 +40,16 @@ router.post('/signup', async (req, res) => {
       referrer = result && result.length > 0 ? result[0] : null;
     }
 
-    // Insert new user
+    // Insert new user with the specified role
     await sql`
       INSERT INTO users (id, email, password_hash, full_name, role, referral_code, referrer_id)
-      VALUES (${id}, ${email}, ${password_hash}, ${fullName || null}, 'user', ${myReferralCode}, ${referrer ? referrer.id : null})
+      VALUES (${id}, ${email}, ${password_hash}, ${fullName || null}, ${role}, ${myReferralCode}, ${referrer ? referrer.id : null})
     `;
 
     // create profile mirror
     await sql`
       INSERT INTO user_profiles (id, email, full_name, role, referral_code)
-      VALUES (${id}, ${email}, ${fullName || null}, 'user', ${myReferralCode})
+      VALUES (${id}, ${email}, ${fullName || null}, ${role}, ${myReferralCode})
     `;
 
     // persist canonical referral code in referral_codes table to prevent duplicates
@@ -71,7 +74,7 @@ router.post('/signup', async (req, res) => {
     const subId = uuidv4();
     const now = new Date().toISOString();
     const far = new Date(); far.setFullYear(far.getFullYear() + 1);
-    
+
     await sql`
       INSERT INTO user_subscriptions (id, user_id, status, plan_id, current_period_start, current_period_end, quiz_attempts_used, quiz_attempts_limit, updated_at)
       VALUES (${subId}, ${id}, 'active', null, ${now}, ${far.toISOString()}, 0, ${initialAttempts}, ${now})
@@ -124,7 +127,7 @@ router.post('/signup', async (req, res) => {
           // find or create subscription for referrer
           const refSubResult = await sql`SELECT * FROM user_subscriptions WHERE user_id = ${referrerId} LIMIT 1`;
           let refSub = refSubResult && refSubResult.length > 0 ? refSubResult[0] : null;
-          
+
           if (!refSub) {
             const newSubId = uuidv4();
             const now2 = new Date().toISOString();
@@ -159,7 +162,7 @@ router.post('/login', async (req, res) => {
 
     const userResult = await sql`SELECT * FROM users WHERE email = ${email}`;
     if (!userResult || userResult.length === 0) return res.status(401).json({ error: 'Invalid credentials' });
-    
+
     const user = userResult[0];
 
     // If user is deleted, block login and return an explanatory message
@@ -193,7 +196,7 @@ router.get('/session', async (req, res) => {
 
     const token = auth.replace('Bearer ', '');
     const payload = jwt.verify(token, JWT_SECRET);
-    
+
     const userResult = await sql`SELECT id, email, full_name, role, disabled, deleted, status_message FROM users WHERE id = ${payload.id}`;
     if (!userResult || userResult.length === 0) return res.json({ data: { session: null } });
 
@@ -234,7 +237,7 @@ router.post('/reset-admin', async (req, res) => {
     // upsert into users
     const existingResult = await sql`SELECT id FROM users WHERE email = ${adminEmail}`;
     let id = existingResult && existingResult.length > 0 ? existingResult[0].id : uuidv4();
-    
+
     if (existingResult && existingResult.length > 0) {
       await sql`UPDATE users SET password_hash = ${password_hash}, full_name = ${adminFullName}, role = 'admin' WHERE id = ${id}`;
     } else {
