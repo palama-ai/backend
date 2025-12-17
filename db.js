@@ -9,7 +9,7 @@ let initError = null;
 function getSQLClient() {
   if (sqlClient) return sqlClient;
   if (initError) throw initError;
-  
+
   try {
     // Log all environment variables that might contain the database URL
     const allKeys = Object.keys(process.env);
@@ -19,12 +19,12 @@ function getSQLClient() {
     console.log('[db]   - NEON_CONNECTION_STRING:', !!process.env.NEON_CONNECTION_STRING);
     console.log('[db]   - DB keys:', allKeys.filter(k => k.toUpperCase().includes('DB')));
     console.log('[db]   - DATABASE keys:', allKeys.filter(k => k.toUpperCase().includes('DATABASE')));
-    
+
     // Try DATABASE_URL, NEON_CONNECTION_STRING, or other alternatives
-    let DATABASE_URL = process.env.DATABASE_URL || 
-                       process.env.NEON_CONNECTION_STRING ||
-                       process.env.DATABASE_URL_PROD;
-    
+    let DATABASE_URL = process.env.DATABASE_URL ||
+      process.env.NEON_CONNECTION_STRING ||
+      process.env.DATABASE_URL_PROD;
+
     if (!DATABASE_URL) {
       console.error('[db] CRITICAL: DATABASE_URL not found in environment');
       console.error('[db] Vercel requires DATABASE_URL to be set in Project Settings > Environment Variables');
@@ -33,16 +33,16 @@ function getSQLClient() {
       console.error('[db]   2. Navigate to Settings > Environment Variables');
       console.error('[db]   3. Add a new variable: DATABASE_URL = postgresql://...');
       console.error('[db]   4. Redeploy the project');
-      
-      const availableVars = allKeys.filter(k => 
+
+      const availableVars = allKeys.filter(k =>
         k.includes('DB') || k.includes('DATABASE') || k.includes('NEON') || k.includes('SQL')
       );
-      
+
       const msg = `DATABASE_URL not configured. Available DB-related vars: ${availableVars.join(', ') || 'none'}`;
       initError = new Error(msg);
       throw initError;
     }
-    
+
     console.log('[db] DATABASE_URL found, initializing Neon client...');
     sqlClient = neon(DATABASE_URL);
     console.log('[db] ✅ Neon PostgreSQL client initialized successfully');
@@ -64,7 +64,7 @@ function sql(strings, ...values) {
 async function init() {
   try {
     console.log('[db] Starting PostgreSQL schema initialization...');
-    
+
     // Lazy initialize SQL client
     const sqlClient = getSQLClient();
 
@@ -97,10 +97,23 @@ async function init() {
         full_name VARCHAR(255),
         role VARCHAR(50),
         referral_code VARCHAR(50),
+        brand_name VARCHAR(255),
+        website VARCHAR(500),
+        bio TEXT,
         updated_at TIMESTAMP DEFAULT NOW()
       )
     `;
     console.log('[db] Created/verified user_profiles table');
+
+    // Add missing columns for existing tables (migration)
+    try {
+      await sqlClient`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS brand_name VARCHAR(255)`;
+      await sqlClient`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS website VARCHAR(500)`;
+      await sqlClient`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS bio TEXT`;
+      console.log('[db] Added/verified seller columns in user_profiles');
+    } catch (e) {
+      console.log('[db] Seller columns migration skipped:', e.message);
+    }
 
     await sqlClient`CREATE INDEX IF NOT EXISTS idx_user_profiles_email ON user_profiles(email)`;
 
@@ -265,6 +278,48 @@ async function init() {
     `;
     console.log('[db] Created/verified contact_messages table');
 
+    // Seller products table
+    await sqlClient`
+      CREATE TABLE IF NOT EXISTS seller_products (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        seller_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        name VARCHAR(255) NOT NULL,
+        brand VARCHAR(255),
+        description TEXT,
+        price DECIMAL(10,2),
+        original_price DECIMAL(10,2),
+        image_url VARCHAR(500),
+        category VARCHAR(100),
+        skin_types TEXT,
+        concerns TEXT,
+        purchase_url VARCHAR(500),
+        published INTEGER DEFAULT 0,
+        view_count INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `;
+    console.log('[db] Created/verified seller_products table');
+
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_seller_products_seller_id ON seller_products(seller_id)`;
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_seller_products_category ON seller_products(category)`;
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_seller_products_published ON seller_products(published)`;
+
+    // Product views table for analytics
+    await sqlClient`
+      CREATE TABLE IF NOT EXISTS product_views (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        product_id UUID REFERENCES seller_products(id) ON DELETE CASCADE,
+        user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `;
+    console.log('[db] Created/verified product_views table');
+
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_product_views_product_id ON product_views(product_id)`;
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_product_views_created_at ON product_views(created_at)`;
+
+
     // Seed admin user if not exists (dev-friendly)
     try {
       const adminEmail = process.env.GLOWMATCH_ADMIN_EMAIL || 'admin@glowmatch.com';
@@ -273,7 +328,7 @@ async function init() {
 
       // Check if admin already exists
       const existing = await sqlClient`SELECT id FROM users WHERE email = ${adminEmail}`;
-      
+
       if (!existing || existing.length === 0) {
         const id = uuidv4();
         const password_hash = await bcrypt.hash(adminPassword, 10);
@@ -314,9 +369,9 @@ async function init() {
   }
 }
 
-module.exports = { 
+module.exports = {
   sql,
-  init 
+  init
 };
 
 
