@@ -22,12 +22,12 @@ router.get('/:userId', async (req, res) => {
     // First try to get profile from user_profiles
     const profileResult = await sql`SELECT * FROM user_profiles WHERE id = ${userId}`;
     let profile = profileResult && profileResult.length > 0 ? profileResult[0] : null;
-    
+
     if (!profile) {
       // If profile doesn't exist, try to get from users table and create it
       const userResult = await sql`SELECT id, email, full_name, role, referral_code FROM users WHERE id = ${userId}`;
       if (!userResult || userResult.length === 0) return res.status(404).json({ error: 'Not found' });
-      
+
       const user = userResult[0];
       // Create profile entry
       await sql`
@@ -62,15 +62,61 @@ router.put('/:userId', async (req, res) => {
 
   const updates = req.body || {};
   try {
-    // Get existing referral_code from users table first
-    const userResult = await sql`SELECT referral_code FROM users WHERE id = ${auth.id}`;
+    // Get existing referral_code and role from users table first
+    const userResult = await sql`SELECT referral_code, role FROM users WHERE id = ${auth.id}`;
     const referralCode = userResult && userResult.length > 0 ? userResult[0].referral_code : null;
+    const existingRole = userResult && userResult.length > 0 ? userResult[0].role : 'user';
 
     await sql`
-      INSERT INTO user_profiles (id, email, full_name, role, referral_code, updated_at)
-      VALUES (${auth.id}, ${updates.email || auth.email}, ${updates.full_name || updates.fullName || null}, ${updates.role || 'user'}, ${referralCode}, NOW())
-      ON CONFLICT (id) DO UPDATE SET email = ${updates.email || auth.email}, full_name = ${updates.full_name || updates.fullName || null}, role = ${updates.role || 'user'}, referral_code = ${referralCode}, updated_at = NOW()
+      INSERT INTO user_profiles (id, email, full_name, role, referral_code, brand_name, website, bio, updated_at)
+      VALUES (${auth.id}, ${updates.email || auth.email}, ${updates.full_name || updates.fullName || null}, ${existingRole}, ${referralCode}, ${updates.brand_name || null}, ${updates.website || null}, ${updates.bio || null}, NOW())
+      ON CONFLICT (id) DO UPDATE SET 
+        email = COALESCE(${updates.email}, user_profiles.email), 
+        full_name = COALESCE(${updates.full_name || updates.fullName}, user_profiles.full_name), 
+        brand_name = COALESCE(${updates.brand_name}, user_profiles.brand_name),
+        website = COALESCE(${updates.website}, user_profiles.website),
+        bio = COALESCE(${updates.bio}, user_profiles.bio),
+        updated_at = NOW()
     `;
+
+    // Also update users table full_name if changed
+    if (updates.full_name || updates.fullName) {
+      await sql`UPDATE users SET full_name = ${updates.full_name || updates.fullName} WHERE id = ${auth.id}`;
+    }
+
+    const profile = await sql`SELECT * FROM user_profiles WHERE id = ${auth.id}`;
+    res.json({ data: profile[0] });
+  } catch (err) {
+    console.error('[profile.put] error:', err);
+    res.status(500).json({ error: 'Failed to update profile' });
+  }
+});
+
+// Alternative: PUT /profile (no userId param, uses JWT)
+router.put('/', async (req, res) => {
+  const auth = authFromHeader(req);
+  if (!auth) return res.status(401).json({ error: 'Unauthorized' });
+
+  const updates = req.body || {};
+  try {
+    const userResult = await sql`SELECT referral_code, role FROM users WHERE id = ${auth.id}`;
+    const referralCode = userResult && userResult.length > 0 ? userResult[0].referral_code : null;
+    const existingRole = userResult && userResult.length > 0 ? userResult[0].role : 'user';
+
+    await sql`
+      INSERT INTO user_profiles (id, email, full_name, role, referral_code, brand_name, website, bio, updated_at)
+      VALUES (${auth.id}, ${auth.email}, ${updates.full_name || null}, ${existingRole}, ${referralCode}, ${updates.brand_name || null}, ${updates.website || null}, ${updates.bio || null}, NOW())
+      ON CONFLICT (id) DO UPDATE SET 
+        full_name = COALESCE(${updates.full_name}, user_profiles.full_name), 
+        brand_name = COALESCE(${updates.brand_name}, user_profiles.brand_name),
+        website = COALESCE(${updates.website}, user_profiles.website),
+        bio = COALESCE(${updates.bio}, user_profiles.bio),
+        updated_at = NOW()
+    `;
+
+    if (updates.full_name) {
+      await sql`UPDATE users SET full_name = ${updates.full_name} WHERE id = ${auth.id}`;
+    }
 
     const profile = await sql`SELECT * FROM user_profiles WHERE id = ${auth.id}`;
     res.json({ data: profile[0] });
@@ -81,3 +127,4 @@ router.put('/:userId', async (req, res) => {
 });
 
 module.exports = router;
+
