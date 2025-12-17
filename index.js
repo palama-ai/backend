@@ -35,6 +35,7 @@ const eventsRoutes = require('./routes/events');
 const contactRoutes = require('./routes/contact');
 const referralsRoutes = require('./routes/referrals');
 const notificationsRoutes = require('./routes/notifications');
+const sellerRoutes = require('./routes/seller');
 
 const PORT = process.env.PORT || 4000;
 
@@ -54,7 +55,7 @@ app.use(cors({
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
-    
+
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
@@ -87,7 +88,7 @@ let dbInitPromise = null;
 function ensureDbInitialized() {
   if (dbReady) return Promise.resolve();
   if (dbInitializing) return dbInitPromise;
-  
+
   dbInitializing = true;
   dbInitPromise = init()
     .then(() => {
@@ -100,7 +101,7 @@ function ensureDbInitialized() {
       dbInitPromise = null;
       throw err;
     });
-  
+
   return dbInitPromise;
 }
 
@@ -109,12 +110,12 @@ app.use(async (req, res, next) => {
   // Routes that don't need DB initialization
   const skipDbInit = ['/api', '/__routes', '/favicon.ico'];
   const isSkipPath = skipDbInit.some(path => req.path === path || req.path.startsWith(path + '/'));
-  
+
   // Also skip health check endpoint
   if (isSkipPath || req.path === '/api/health') {
     return next();
   }
-  
+
   // For /api/* endpoints, always ensure DB is initialized
   if (req.path.startsWith('/api/')) {
     try {
@@ -122,27 +123,27 @@ app.use(async (req, res, next) => {
       return next();
     } catch (err) {
       console.error('[backend] DB initialization error during request:', err);
-      
+
       // Check if this is a DATABASE_URL missing error
       const isDatabaseUrlMissing = err.message && err.message.includes('DATABASE_URL');
-      
+
       if (isDatabaseUrlMissing) {
-        return res.status(503).json({ 
-          error: 'Database configuration missing', 
+        return res.status(503).json({
+          error: 'Database configuration missing',
           message: 'DATABASE_URL environment variable is not set in Vercel project settings.',
           help: 'Go to Vercel Dashboard > Project Settings > Environment Variables and add DATABASE_URL',
-          details: err.message 
+          details: err.message
         });
       }
-      
-      return res.status(503).json({ 
-        error: 'Database not ready', 
+
+      return res.status(503).json({
+        error: 'Database not ready',
         message: 'The database is still initializing. Please try again in a moment.',
-        details: err.message 
+        details: err.message
       });
     }
   }
-  
+
   next();
 });
 
@@ -158,14 +159,15 @@ app.use('/api/events', eventsRoutes);
 app.use('/api/contact', contactRoutes);
 app.use('/api/referrals', referralsRoutes);
 app.use('/api/notifications', notificationsRoutes);
+app.use('/api/seller', sellerRoutes);
 
 // Basic API root - helpful for health checks and to avoid "Cannot GET /api" responses
 app.get('/api', (req, res) => {
   try {
-    res.json({ 
-      ok: true, 
-      message: 'GlowMatch API', 
-      routes: '/__routes', 
+    res.json({
+      ok: true,
+      message: 'GlowMatch API',
+      routes: '/__routes',
       db_ready: dbReady,
       db_initializing: dbInitializing,
       database_url_present: !!process.env.DATABASE_URL
@@ -200,7 +202,7 @@ app.get('/api/health', (req, res) => {
     const dbUrl = process.env.DATABASE_URL;
     const hasDbUrl = !!dbUrl;
     const dbUrlMasked = hasDbUrl ? dbUrl.substring(0, 20) + '...' : 'NOT SET';
-    
+
     res.json({
       status: dbReady ? 'healthy' : 'initializing',
       db_ready: dbReady,
