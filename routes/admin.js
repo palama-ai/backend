@@ -12,7 +12,7 @@ console.log('[backend/routes/admin] admin routes loaded');
 router.get('/debug/users', async (req, res) => {
   try {
     const users = await sql`SELECT u.id, u.email, u.full_name, u.role, u.disabled FROM users u ORDER BY u.created_at DESC`;
-    
+
     const enriched = [];
     for (const u of users) {
       const subResult = await sql`SELECT * FROM user_subscriptions WHERE user_id = ${u.id} ORDER BY updated_at DESC LIMIT 1`;
@@ -29,24 +29,86 @@ router.get('/debug/stats', async (req, res) => {
   try {
     const totalRow = await sql`SELECT COUNT(*) as total FROM users`;
     const total = totalRow && totalRow.length > 0 ? parseInt(totalRow[0].total) : 0;
-    
+
     const disabledRow = await sql`SELECT COUNT(*) as disabled FROM users WHERE disabled = 1`;
     const disabled = disabledRow && disabledRow.length > 0 ? parseInt(disabledRow[0].disabled) : 0;
     const active = total - disabled;
-    
+
     const subscribedRow = await sql`SELECT COUNT(DISTINCT user_id) AS subscribedcount FROM user_subscriptions WHERE status = 'active'`;
     const subscribed = subscribedRow && subscribedRow.length > 0 ? parseInt(subscribedRow[0].subscribedcount) : 0;
-    
+
     const plansResult = await sql`SELECT plan_id, COUNT(*) as count FROM user_subscriptions WHERE status = 'active' GROUP BY plan_id`;
     const planBreakdown = {};
     for (const p of plansResult) {
       planBreakdown[p.plan_id || 'none'] = parseInt(p.count);
     }
-    
+
     res.json({ data: { total, active, disabled, subscribed, planBreakdown } });
   } catch (e) {
     console.error('[backend/routes/admin] debug/stats error', e && e.stack ? e.stack : e);
     res.status(500).json({ error: 'Failed to compute stats (debug)' });
+  }
+});
+
+// Database migration endpoint - creates missing tables
+router.post('/db-migrate', async (req, res) => {
+  try {
+    console.log('[admin] Running database migration...');
+
+    // Add seller columns to user_profiles if not exist
+    try {
+      await sql`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS brand_name VARCHAR(255)`;
+      await sql`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS website VARCHAR(500)`;
+      await sql`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS bio TEXT`;
+      console.log('[admin] Added seller columns to user_profiles');
+    } catch (e) { console.log('[admin] user_profiles columns:', e.message); }
+
+    // Create seller_products table
+    await sql`
+      CREATE TABLE IF NOT EXISTS seller_products (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        seller_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        name VARCHAR(255) NOT NULL,
+        brand VARCHAR(255),
+        description TEXT,
+        price DECIMAL(10,2),
+        original_price DECIMAL(10,2),
+        image_url VARCHAR(500),
+        category VARCHAR(100),
+        skin_types TEXT,
+        concerns TEXT,
+        purchase_url VARCHAR(500),
+        published INTEGER DEFAULT 0,
+        view_count INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `;
+    console.log('[admin] Created seller_products table');
+
+    // Create indexes
+    await sql`CREATE INDEX IF NOT EXISTS idx_seller_products_seller_id ON seller_products(seller_id)`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_seller_products_category ON seller_products(category)`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_seller_products_published ON seller_products(published)`;
+
+    // Create product_views table
+    await sql`
+      CREATE TABLE IF NOT EXISTS product_views (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        product_id UUID REFERENCES seller_products(id) ON DELETE CASCADE,
+        user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `;
+    console.log('[admin] Created product_views table');
+
+    await sql`CREATE INDEX IF NOT EXISTS idx_product_views_product_id ON product_views(product_id)`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_product_views_created_at ON product_views(created_at)`;
+
+    res.json({ success: true, message: 'Database migration completed successfully' });
+  } catch (e) {
+    console.error('[admin] db-migrate error:', e);
+    res.status(500).json({ error: e.message || 'Migration failed' });
   }
 });
 
@@ -74,7 +136,7 @@ router.get('/users', requireAdmin, async (req, res) => {
       SELECT u.id, u.email, u.full_name, u.role, u.disabled, up.updated_at as profile_updated
       FROM users u LEFT JOIN user_profiles up ON up.id = u.id ORDER BY u.created_at DESC
     `;
-    
+
     // attach active subscription info
     const enriched = [];
     for (const u of users) {
@@ -109,10 +171,10 @@ router.get('/debug/sessions', requireAdmin, async (req, res) => {
 router.get('/stats', requireAdmin, async (req, res) => {
   try {
     console.log('[backend/routes/admin] GET /stats called by', req.admin ? req.admin.sub : 'unknown');
-    
+
     const totalRow = await sql`SELECT COUNT(*) as total FROM users`;
     const total = totalRow && totalRow.length > 0 ? parseInt(totalRow[0].total) : 0;
-    
+
     const disabledRow = await sql`SELECT COUNT(*) as disabled FROM users WHERE disabled = 1`;
     const disabled = disabledRow && disabledRow.length > 0 ? parseInt(disabledRow[0].disabled) : 0;
     const active = total - disabled;
@@ -218,9 +280,9 @@ router.get('/analytics', requireAdmin, async (req, res) => {
         FROM site_sessions WHERE duration_seconds IS NOT NULL AND started_at >= ${startISO} 
         GROUP BY DATE(started_at) ORDER BY day ASC
       `;
-      durRows.forEach(r => { 
-        const dayStr = r.day ? r.day.toISOString().split('T')[0] : ''; 
-        durationMap[dayStr] = r.avg_duration || 0; 
+      durRows.forEach(r => {
+        const dayStr = r.day ? r.day.toISOString().split('T')[0] : '';
+        durationMap[dayStr] = r.avg_duration || 0;
       });
     } catch (e) {
       // if table missing or empty, ignore
@@ -238,7 +300,7 @@ router.get('/analytics', requireAdmin, async (req, res) => {
     // Live users: sessions with last_ping_at in the last 60 seconds
     let liveUsers = 0;
     try {
-      const cutoffLive = new Date(); 
+      const cutoffLive = new Date();
       cutoffLive.setSeconds(cutoffLive.getSeconds() - 60);
       const cutoffISO = cutoffLive.toISOString();
       const row = await sql`SELECT COUNT(DISTINCT session_id) as c FROM site_sessions WHERE last_ping_at >= ${cutoffISO}`;
@@ -249,11 +311,11 @@ router.get('/analytics', requireAdmin, async (req, res) => {
     }
 
     // Visit counts for several ranges (days)
-    const visitRanges = [1,7,15,30,90];
+    const visitRanges = [1, 7, 15, 30, 90];
     const visitCounts = {};
     try {
       for (const n of visitRanges) {
-        const since = new Date(); 
+        const since = new Date();
         since.setDate(since.getDate() - (n - 1));
         const sinceISO = since.toISOString();
         const r = await sql`SELECT COUNT(*) as c FROM page_views WHERE created_at >= ${sinceISO}`;
@@ -351,19 +413,21 @@ router.get('/analytics', requireAdmin, async (req, res) => {
       newUsersPct: pctChange(prevNewUsers, totalNewUsers),
     };
 
-    res.json({ data: {
-      labels,
-      activeSeries,
-      convSeries,
-      newUsersSeries,
-      attemptsSeries,
-      sessionDurationSeries,
-      liveUsers,
-      visitCounts,
-      totals: { totalActive, totalConv, totalNewUsers, totalAttempts },
-      previousTotals: { prevActive, prevConv, prevNewUsers, prevAttempts },
-      growth
-    } });
+    res.json({
+      data: {
+        labels,
+        activeSeries,
+        convSeries,
+        newUsersSeries,
+        attemptsSeries,
+        sessionDurationSeries,
+        liveUsers,
+        visitCounts,
+        totals: { totalActive, totalConv, totalNewUsers, totalAttempts },
+        previousTotals: { prevActive, prevConv, prevNewUsers, prevAttempts },
+        growth
+      }
+    });
   } catch (e) {
     console.error('[backend/routes/admin] analytics error', e && e.stack ? e.stack : e);
     res.status(500).json({ error: 'Failed to compute analytics' });
@@ -375,7 +439,7 @@ router.patch('/users/:id', requireAdmin, async (req, res) => {
   try {
     const id = req.params.id;
     const { disabled, role, status_message, deleted } = req.body;
-    
+
     if (typeof disabled !== 'undefined') {
       await sql`UPDATE users SET disabled = ${disabled ? 1 : 0} WHERE id = ${id}`;
     }
@@ -403,7 +467,7 @@ router.patch('/users/:id', requireAdmin, async (req, res) => {
       // mark deleted flag (soft delete)
       await sql`UPDATE users SET deleted = ${deleted ? 1 : 0} WHERE id = ${id}`;
     }
-    
+
     const userResult = await sql`SELECT id, email, full_name, role, disabled FROM users WHERE id = ${id}`;
     const user = userResult && userResult.length > 0 ? userResult[0] : null;
     res.json({ data: user });
@@ -418,7 +482,7 @@ router.delete('/users/:id', requireAdmin, async (req, res) => {
   try {
     const id = req.params.id;
     console.log('[admin] DELETE /users/:id called by', req.admin?.id, 'target:', id);
-    
+
     // Try to soft-delete first (mark deleted = 1)
     try {
       await sql`UPDATE users SET deleted = 1 WHERE id = ${id}`;
@@ -443,15 +507,15 @@ router.post('/users/:id/subscription', requireAdmin, async (req, res) => {
     const { planId, status } = req.body;
     const id = uuidv4();
     const now = new Date().toISOString();
-    const oneYear = new Date(); 
+    const oneYear = new Date();
     oneYear.setFullYear(oneYear.getFullYear() + 1);
-    
+
     // create a new subscription record
     await sql`
       INSERT INTO user_subscriptions (id, user_id, status, plan_id, current_period_start, current_period_end, quiz_attempts_used, quiz_attempts_limit, updated_at) 
       VALUES (${id}, ${userId}, ${status || 'active'}, ${planId || null}, ${now}, ${oneYear.toISOString()}, 0, 999999, ${now})
     `;
-    
+
     const subResult = await sql`SELECT * FROM user_subscriptions WHERE id = ${id}`;
     const sub = subResult && subResult.length > 0 ? subResult[0] : null;
     res.json({ data: sub });
@@ -466,9 +530,9 @@ router.get('/blogs', requireAdmin, async (req, res) => {
   try {
     const blogs = await sql`SELECT * FROM blogs ORDER BY created_at DESC`;
     res.json({ data: blogs });
-  } catch (e) { 
-    console.error(e); 
-    res.status(500).json({ error: 'Failed to list blogs' }); 
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Failed to list blogs' });
   }
 });
 
@@ -485,9 +549,9 @@ router.post('/blogs', requireAdmin, async (req, res) => {
     const blog = blogResult && blogResult.length > 0 ? blogResult[0] : null;
     console.log('[backend/admin] POST /blogs - saved blog:', blog);
     res.json({ data: blog });
-  } catch (e) { 
-    console.error('[backend/admin] POST /blogs error:', e); 
-    res.status(500).json({ error: 'Failed to create blog' }); 
+  } catch (e) {
+    console.error('[backend/admin] POST /blogs error:', e);
+    res.status(500).json({ error: 'Failed to create blog' });
   }
 });
 
@@ -503,9 +567,9 @@ router.put('/blogs/:id', requireAdmin, async (req, res) => {
     const blogResult = await sql`SELECT * FROM blogs WHERE id = ${id}`;
     const blog = blogResult && blogResult.length > 0 ? blogResult[0] : null;
     res.json({ data: blog });
-  } catch (e) { 
-    console.error(e); 
-    res.status(500).json({ error: 'Failed to update blog' }); 
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Failed to update blog' });
   }
 });
 
@@ -514,9 +578,9 @@ router.delete('/blogs/:id', requireAdmin, async (req, res) => {
     const id = req.params.id;
     await sql`DELETE FROM blogs WHERE id = ${id}`;
     res.json({ data: { id } });
-  } catch (e) { 
-    console.error(e); 
-    res.status(500).json({ error: 'Failed to delete blog' }); 
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Failed to delete blog' });
   }
 });
 
@@ -525,9 +589,9 @@ router.get('/messages', requireAdmin, async (req, res) => {
   try {
     const rows = await sql`SELECT * FROM contact_messages ORDER BY created_at DESC`;
     res.json({ data: rows });
-  } catch (e) { 
-    console.error(e); 
-    res.status(500).json({ error: 'Failed to list messages' }); 
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Failed to list messages' });
   }
 });
 
@@ -536,14 +600,14 @@ router.get('/messages/:id', requireAdmin, async (req, res) => {
     const id = req.params.id;
     const msgResult = await sql`SELECT * FROM contact_messages WHERE id = ${id}`;
     const msg = msgResult && msgResult.length > 0 ? msgResult[0] : null;
-    
+
     if (msg && !msg.read) {
       await sql`UPDATE contact_messages SET read = 1 WHERE id = ${id}`;
     }
     res.json({ data: msg });
-  } catch (e) { 
-    console.error(e); 
-    res.status(500).json({ error: 'Failed to get message' }); 
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Failed to get message' });
   }
 });
 
@@ -554,7 +618,7 @@ router.post('/blogs/upload', requireAdmin, (req, res) => {
     if (!image) {
       return res.status(400).json({ error: 'Image is required' });
     }
-    
+
     // Image stored as base64 data URL
     // In production, you might want to save to cloud storage (AWS S3, Cloudinary, etc.)
     res.json({ data: { image_url: image } });
