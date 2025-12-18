@@ -1,6 +1,101 @@
 const express = require('express');
 const router = express.Router();
 const { sql } = require('../db');
+const { voteOnProducts } = require('../lib/aiProviders');
+
+/**
+ * POST /api/products/ai-recommend
+ * AI-powered product recommendation using multi-model voting
+ * Body:
+ *   - analysis: object with skinType, concerns, confidence, explanation
+ */
+router.post('/ai-recommend', async (req, res) => {
+    try {
+        const { analysis } = req.body;
+
+        if (!analysis || !analysis.skinType) {
+            return res.status(400).json({ error: 'analysis with skinType is required' });
+        }
+
+        console.log('[AI-Recommend] Starting for skinType:', analysis.skinType);
+
+        // Fetch all published products from database
+        const products = await sql`
+            SELECT 
+                id, seller_id, name, brand, description, 
+                price, original_price, image_url, category,
+                skin_types, concerns, purchase_url, view_count
+            FROM seller_products 
+            WHERE published = 1
+            ORDER BY view_count DESC, created_at DESC
+            LIMIT 30
+        `;
+
+        if (!products || products.length === 0) {
+            return res.json({
+                data: [],
+                votingInfo: { success: false, error: 'No products available' },
+                meta: { total: 0 }
+            });
+        }
+
+        // Parse JSON fields for each product
+        const parsedProducts = products.map(product => {
+            let skinTypes = [];
+            let concerns = [];
+
+            try {
+                if (product.skin_types) {
+                    skinTypes = typeof product.skin_types === 'string'
+                        ? JSON.parse(product.skin_types)
+                        : product.skin_types;
+                }
+            } catch (e) { /* ignore */ }
+
+            try {
+                if (product.concerns) {
+                    concerns = typeof product.concerns === 'string'
+                        ? JSON.parse(product.concerns)
+                        : product.concerns;
+                }
+            } catch (e) { /* ignore */ }
+
+            return {
+                ...product,
+                skin_types: skinTypes,
+                concerns: concerns,
+                // Normalized field names for frontend
+                image: product.image_url,
+                purchaseUrl: product.purchase_url,
+                originalPrice: product.original_price,
+                rating: 4.5,
+                reviewCount: Math.floor(Math.random() * 500) + 100,
+                type: product.category
+            };
+        });
+
+        // Use AI voting to rank products
+        const { rankedProducts, votingInfo } = await voteOnProducts({
+            analysis,
+            products: parsedProducts
+        });
+
+        console.log('[AI-Recommend] Voting complete:', votingInfo);
+
+        res.json({
+            data: rankedProducts,
+            votingInfo,
+            meta: {
+                total: rankedProducts.length,
+                skinType: analysis.skinType,
+                concerns: analysis.concerns
+            }
+        });
+    } catch (err) {
+        console.error('[AI-Recommend] Error:', err);
+        res.status(500).json({ error: 'Failed to get AI recommendations', details: err.message });
+    }
+});
 
 /**
  * GET /api/products/recommended
