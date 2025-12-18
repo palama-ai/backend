@@ -329,6 +329,54 @@ async function init() {
     await sqlClient`CREATE INDEX IF NOT EXISTS idx_product_views_product_id ON product_views(product_id)`;
     await sqlClient`CREATE INDEX IF NOT EXISTS idx_product_views_created_at ON product_views(created_at)`;
 
+    // Product ratings table
+    await sqlClient`
+      CREATE TABLE IF NOT EXISTS product_ratings (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        product_id UUID REFERENCES seller_products(id) ON DELETE CASCADE,
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        rating INTEGER CHECK (rating >= 1 AND rating <= 5),
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(product_id, user_id)
+      )
+    `;
+    console.log('[db] Created/verified product_ratings table');
+
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_product_ratings_product_id ON product_ratings(product_id)`;
+
+    // Product comments table (with replies support via parent_id)
+    await sqlClient`
+      CREATE TABLE IF NOT EXISTS product_comments (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        product_id UUID REFERENCES seller_products(id) ON DELETE CASCADE,
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        parent_id UUID,
+        content TEXT NOT NULL,
+        likes_count INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `;
+    console.log('[db] Created/verified product_comments table');
+
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_product_comments_product_id ON product_comments(product_id)`;
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_product_comments_parent_id ON product_comments(parent_id)`;
+
+    // Comment likes table
+    await sqlClient`
+      CREATE TABLE IF NOT EXISTS comment_likes (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        comment_id UUID REFERENCES product_comments(id) ON DELETE CASCADE,
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        created_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(comment_id, user_id)
+      )
+    `;
+    console.log('[db] Created/verified comment_likes table');
+
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_comment_likes_comment_id ON comment_likes(comment_id)`;
+
 
     // Seed admin user if not exists (dev-friendly)
     try {
@@ -383,3 +431,6 @@ module.exports = {
   sql,
   init
 };
+
+
+
