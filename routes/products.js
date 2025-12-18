@@ -284,4 +284,258 @@ router.get('/:id', async (req, res) => {
     }
 });
 
+// ============================================
+// Product Reviews System (Ratings & Comments)
+// ============================================
+
+// Helper: Get user from JWT token (optional auth)
+const getUserFromToken = (req) => {
+    try {
+        const authHeader = req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
+        const token = authHeader.split(' ')[1];
+        const jwt = require('jsonwebtoken');
+        const JWT_SECRET = process.env.GLOWMATCH_JWT_SECRET || 'dev_secret_change_me';
+        return jwt.verify(token, JWT_SECRET);
+    } catch (e) {
+        return null;
+    }
+};
+
+// Require auth middleware
+const requireAuth = (req, res, next) => {
+    const user = getUserFromToken(req);
+    if (!user) return res.status(401).json({ error: 'Authentication required' });
+    req.user = user;
+    next();
+};
+
+/**
+ * GET /api/products/:id/reviews
+ * Get product ratings summary and comments
+ */
+router.get('/:id/reviews', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const user = getUserFromToken(req);
+
+        // Get rating stats
+        const ratingStats = await sql`
+            SELECT 
+                COUNT(*) as total_ratings,
+                COALESCE(AVG(rating), 0) as avg_rating
+            FROM product_ratings 
+            WHERE product_id = ${id}
+        `;
+
+        // Get user's rating if logged in
+        let userRating = null;
+        if (user) {
+            const userRatingResult = await sql`
+                SELECT rating FROM product_ratings 
+                WHERE product_id = ${id} AND user_id = ${user.id}
+            `;
+            userRating = userRatingResult?.[0]?.rating || null;
+        }
+
+        // Get comments with user info (parent comments first)
+        const comments = await sql`
+            SELECT 
+                pc.id, pc.product_id, pc.user_id, pc.parent_id,
+                pc.content, pc.likes_count, pc.created_at,
+                u.full_name as user_name
+            FROM product_comments pc
+            LEFT JOIN users u ON u.id = pc.user_id
+            WHERE pc.product_id = ${id}
+            ORDER BY pc.created_at DESC
+        `;
+
+        // Get user's liked comments
+        let userLikedComments = [];
+        if (user) {
+            const likes = await sql`
+                SELECT comment_id FROM comment_likes WHERE user_id = ${user.id}
+            `;
+            userLikedComments = likes.map(l => l.comment_id);
+        }
+
+        // Organize comments (parent + replies)
+        const parentComments = comments.filter(c => !c.parent_id);
+        const replies = comments.filter(c => c.parent_id);
+
+        const organizedComments = parentComments.map(parent => ({
+            ...parent,
+            isLiked: userLikedComments.includes(parent.id),
+            isOwner: user?.id === parent.user_id,
+            replies: replies
+                .filter(r => r.parent_id === parent.id)
+                .map(r => ({
+                    ...r,
+                    isLiked: userLikedComments.includes(r.id),
+                    isOwner: user?.id === r.user_id
+                }))
+        }));
+
+        res.json({
+            data: {
+                avgRating: parseFloat(ratingStats[0]?.avg_rating || 0).toFixed(1),
+                totalRatings: parseInt(ratingStats[0]?.total_ratings || 0),
+                userRating,
+                comments: organizedComments,
+                totalComments: comments.length
+            }
+        });
+    } catch (err) {
+        console.error('[products] Error fetching reviews:', err);
+        res.status(500).json({ error: 'Failed to fetch reviews' });
+    }
+});
+
+/**
+ * POST /api/products/:id/rate
+ * Add or update user's rating
+ */
+router.post('/:id/rate', requireAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { rating } = req.body;
+        const userId = req.user.id;
+
+        if (!rating || rating < 1 || rating > 5) {
+            return res.status(400).json({ error: 'Rating must be between 1 and 5' });
+        }
+
+        // Upsert rating (insert or update)
+        await sql`
+            INSERT INTO product_ratings (id, product_id, user_id, rating)
+            VALUES (gen_random_uuid(), ${id}, ${userId}, ${rating})
+            ON CONFLICT (product_id, user_id) 
+            DO UPDATE SET rating = ${rating}, updated_at = NOW()
+        `;
+
+        // Get new average
+        const stats = await sql`
+            SELECT AVG(rating) as avg_rating, COUNT(*) as total
+            FROM product_ratings WHERE product_id = ${id}
+        `;
+
+        res.json({
+            data: {
+                success: true,
+                userRating: rating,
+                avgRating: parseFloat(stats[0]?.avg_rating || 0).toFixed(1),
+                totalRatings: parseInt(stats[0]?.total || 0)
+            }
+        });
+    } catch (err) {
+        console.error('[products] Error rating product:', err);
+        res.status(500).json({ error: 'Failed to rate product' });
+    }
+});
+
+/**
+ * POST /api/products/:id/comments
+ * Add a comment to product
+ */
+router.post('/:id/comments', requireAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { content, parentId } = req.body;
+        const userId = req.user.id;
+
+        if (!content || content.trim().length === 0) {
+            return res.status(400).json({ error: 'Comment content is required' });
+        }
+
+        const commentId = require('uuid').v4();
+        await sql`
+            INSERT INTO product_comments (id, product_id, user_id, parent_id, content)
+            VALUES (${commentId}, ${id}, ${userId}, ${parentId || null}, ${content.trim()})
+        `;
+
+        // Get the created comment with user info
+        const comments = await sql`
+            SELECT pc.*, u.full_name as user_name
+            FROM product_comments pc
+            LEFT JOIN users u ON u.id = pc.user_id
+            WHERE pc.id = ${commentId}
+        `;
+
+        res.json({ data: { ...comments[0], isOwner: true, isLiked: false, replies: [] } });
+    } catch (err) {
+        console.error('[products] Error adding comment:', err);
+        res.status(500).json({ error: 'Failed to add comment' });
+    }
+});
+
+/**
+ * POST /api/products/:id/comments/:commentId/like
+ * Like or unlike a comment
+ */
+router.post('/:id/comments/:commentId/like', requireAuth, async (req, res) => {
+    try {
+        const { commentId } = req.params;
+        const userId = req.user.id;
+
+        // Check if already liked
+        const existing = await sql`
+            SELECT id FROM comment_likes 
+            WHERE comment_id = ${commentId} AND user_id = ${userId}
+        `;
+
+        if (existing && existing.length > 0) {
+            // Unlike
+            await sql`DELETE FROM comment_likes WHERE comment_id = ${commentId} AND user_id = ${userId}`;
+            await sql`UPDATE product_comments SET likes_count = likes_count - 1 WHERE id = ${commentId}`;
+            res.json({ data: { liked: false } });
+        } else {
+            // Like
+            await sql`
+                INSERT INTO comment_likes (id, comment_id, user_id)
+                VALUES (gen_random_uuid(), ${commentId}, ${userId})
+            `;
+            await sql`UPDATE product_comments SET likes_count = likes_count + 1 WHERE id = ${commentId}`;
+            res.json({ data: { liked: true } });
+        }
+    } catch (err) {
+        console.error('[products] Error liking comment:', err);
+        res.status(500).json({ error: 'Failed to like comment' });
+    }
+});
+
+/**
+ * DELETE /api/products/:id/comments/:commentId
+ * Delete own comment
+ */
+router.delete('/:id/comments/:commentId', requireAuth, async (req, res) => {
+    try {
+        const { commentId } = req.params;
+        const userId = req.user.id;
+
+        // Verify ownership
+        const comment = await sql`
+            SELECT id, user_id FROM product_comments WHERE id = ${commentId}
+        `;
+
+        if (!comment || comment.length === 0) {
+            return res.status(404).json({ error: 'Comment not found' });
+        }
+
+        if (comment[0].user_id !== userId) {
+            return res.status(403).json({ error: 'You can only delete your own comments' });
+        }
+
+        // Delete comment (and replies due to cascade... but we don't have cascade on parent_id)
+        // First delete replies
+        await sql`DELETE FROM product_comments WHERE parent_id = ${commentId}`;
+        // Then delete the comment
+        await sql`DELETE FROM product_comments WHERE id = ${commentId}`;
+
+        res.json({ data: { success: true, deletedId: commentId } });
+    } catch (err) {
+        console.error('[products] Error deleting comment:', err);
+        res.status(500).json({ error: 'Failed to delete comment' });
+    }
+});
+
 module.exports = router;
