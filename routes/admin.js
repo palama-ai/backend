@@ -50,6 +50,20 @@ router.get('/debug/stats', async (req, res) => {
   }
 });
 
+// Simple endpoint to fix URL columns - no auth required for one-time migration
+router.post('/fix-url-columns', async (req, res) => {
+  try {
+    console.log('[admin] Running URL columns fix...');
+    await sql`ALTER TABLE seller_products ALTER COLUMN image_url TYPE TEXT`;
+    await sql`ALTER TABLE seller_products ALTER COLUMN purchase_url TYPE TEXT`;
+    console.log('[admin] URL columns fixed successfully!');
+    res.json({ success: true, message: 'URL columns updated to TEXT' });
+  } catch (e) {
+    console.error('[admin] URL fix error:', e);
+    res.json({ success: false, error: e.message, note: 'Columns may already be TEXT' });
+  }
+});
+
 // Database migration endpoint - creates missing tables
 router.post('/db-migrate', async (req, res) => {
   try {
