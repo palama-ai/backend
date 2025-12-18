@@ -73,11 +73,11 @@ router.post('/db-migrate', async (req, res) => {
         description TEXT,
         price DECIMAL(10,2),
         original_price DECIMAL(10,2),
-        image_url VARCHAR(500),
+        image_url TEXT,
         category VARCHAR(100),
         skin_types TEXT,
         concerns TEXT,
-        purchase_url VARCHAR(500),
+        purchase_url TEXT,
         published INTEGER DEFAULT 0,
         view_count INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT NOW(),
@@ -90,6 +90,15 @@ router.post('/db-migrate', async (req, res) => {
     await sql`CREATE INDEX IF NOT EXISTS idx_seller_products_seller_id ON seller_products(seller_id)`;
     await sql`CREATE INDEX IF NOT EXISTS idx_seller_products_category ON seller_products(category)`;
     await sql`CREATE INDEX IF NOT EXISTS idx_seller_products_published ON seller_products(published)`;
+
+    // Migration: Update column types for longer URLs (if table already exists with VARCHAR)
+    try {
+      await sql`ALTER TABLE seller_products ALTER COLUMN image_url TYPE TEXT`;
+      await sql`ALTER TABLE seller_products ALTER COLUMN purchase_url TYPE TEXT`;
+      console.log('[admin] Updated seller_products URL columns to TEXT');
+    } catch (e) {
+      console.log('[admin] URL columns migration skipped:', e.message?.substring(0, 50));
+    }
 
     // Create product_views table
     await sql`
