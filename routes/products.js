@@ -215,27 +215,61 @@ router.get('/recommended', async (req, res) => {
 /**
  * POST /api/products/:id/view
  * Track product view (for analytics)
+ * Rules:
+ * - Count views per user per quiz attempt
+ * - Same product viewed multiple times in one quiz = 1 view
+ * - New quiz attempt = new view can be counted
  */
 router.post('/:id/view', async (req, res) => {
     try {
         const { id } = req.params;
+        const { userId, quizAttemptId } = req.body;
 
-        // Increment view count
+        // If we have userId and quizAttemptId, check for duplicate views
+        if (userId && quizAttemptId) {
+            // Check if this user already viewed this product in this quiz attempt
+            const existing = await sql`
+                SELECT id FROM product_views 
+                WHERE product_id = ${id} 
+                AND user_id = ${userId} 
+                AND quiz_attempt_id = ${quizAttemptId}
+            `;
+
+            if (existing && existing.length > 0) {
+                // Already viewed in this quiz attempt, don't increment
+                return res.json({ success: true, alreadyViewed: true });
+            }
+
+            // New view - insert into product_views and increment count
+            try {
+                await sql`
+                    INSERT INTO product_views (id, product_id, user_id, quiz_attempt_id, created_at)
+                    VALUES (gen_random_uuid(), ${id}, ${userId}, ${quizAttemptId}, NOW())
+                `;
+            } catch (e) {
+                // Ignore duplicate key errors
+                if (!e.message?.includes('duplicate')) {
+                    console.error('[products] Error inserting view:', e);
+                }
+            }
+        } else {
+            // Anonymous view - just track in product_views table without user/quiz info
+            try {
+                await sql`
+                    INSERT INTO product_views (id, product_id, created_at)
+                    VALUES (gen_random_uuid(), ${id}, NOW())
+                `;
+            } catch (e) {
+                // Ignore if product_views table doesn't exist
+            }
+        }
+
+        // Increment view count on the product
         await sql`
             UPDATE seller_products 
             SET view_count = COALESCE(view_count, 0) + 1 
             WHERE id = ${id}
         `;
-
-        // Optionally track in product_views table for detailed analytics
-        try {
-            await sql`
-                INSERT INTO product_views (id, product_id, created_at)
-                VALUES (gen_random_uuid(), ${id}, NOW())
-            `;
-        } catch (e) {
-            // Ignore if product_views table doesn't exist
-        }
 
         res.json({ success: true });
     } catch (err) {
