@@ -321,6 +321,7 @@ async function init() {
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         product_id UUID REFERENCES seller_products(id) ON DELETE CASCADE,
         user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        quiz_attempt_id UUID,
         created_at TIMESTAMP DEFAULT NOW()
       )
     `;
@@ -328,6 +329,18 @@ async function init() {
 
     await sqlClient`CREATE INDEX IF NOT EXISTS idx_product_views_product_id ON product_views(product_id)`;
     await sqlClient`CREATE INDEX IF NOT EXISTS idx_product_views_created_at ON product_views(created_at)`;
+
+    // Add quiz_attempt_id column if not exists (migration)
+    try {
+      await sqlClient`ALTER TABLE product_views ADD COLUMN IF NOT EXISTS quiz_attempt_id UUID`;
+    } catch (e) { /* ignore */ }
+
+    // Create unique index for preventing duplicate views per user per quiz attempt
+    try {
+      await sqlClient`CREATE UNIQUE INDEX IF NOT EXISTS idx_product_views_unique ON product_views(product_id, user_id, quiz_attempt_id) WHERE user_id IS NOT NULL AND quiz_attempt_id IS NOT NULL`;
+    } catch (e) {
+      console.log('[db] Unique index may already exist:', e.message?.substring(0, 50));
+    }
 
     // Product ratings table
     await sqlClient`
