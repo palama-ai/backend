@@ -64,6 +64,71 @@ router.post('/fix-url-columns', async (req, res) => {
   }
 });
 
+// Simple endpoint to create ONLY the product reviews tables - no auth required
+router.post('/create-reviews-tables', async (req, res) => {
+  const results = [];
+  try {
+    console.log('[admin] Creating product reviews tables...');
+
+    // Create product_ratings table
+    try {
+      await sql`
+        CREATE TABLE IF NOT EXISTS product_ratings (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          product_id UUID,
+          user_id UUID,
+          rating INTEGER,
+          created_at TIMESTAMP DEFAULT NOW(),
+          updated_at TIMESTAMP DEFAULT NOW()
+        )
+      `;
+      results.push('product_ratings: created');
+    } catch (e) {
+      results.push('product_ratings: ' + e.message);
+    }
+
+    // Create product_comments table
+    try {
+      await sql`
+        CREATE TABLE IF NOT EXISTS product_comments (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          product_id UUID,
+          user_id UUID,
+          parent_id UUID,
+          content TEXT,
+          likes_count INTEGER DEFAULT 0,
+          created_at TIMESTAMP DEFAULT NOW(),
+          updated_at TIMESTAMP DEFAULT NOW()
+        )
+      `;
+      results.push('product_comments: created');
+    } catch (e) {
+      results.push('product_comments: ' + e.message);
+    }
+
+    // Create comment_likes table
+    try {
+      await sql`
+        CREATE TABLE IF NOT EXISTS comment_likes (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          comment_id UUID,
+          user_id UUID,
+          created_at TIMESTAMP DEFAULT NOW()
+        )
+      `;
+      results.push('comment_likes: created');
+    } catch (e) {
+      results.push('comment_likes: ' + e.message);
+    }
+
+    console.log('[admin] Product reviews tables results:', results);
+    res.json({ success: true, results });
+  } catch (e) {
+    console.error('[admin] create-reviews-tables error:', e);
+    res.status(500).json({ error: e.message, results });
+  }
+});
+
 // Database migration endpoint - creates missing tables
 router.post('/db-migrate', async (req, res) => {
   try {
