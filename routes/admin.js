@@ -128,7 +128,52 @@ router.post('/db-migrate', async (req, res) => {
     await sql`CREATE INDEX IF NOT EXISTS idx_product_views_product_id ON product_views(product_id)`;
     await sql`CREATE INDEX IF NOT EXISTS idx_product_views_created_at ON product_views(created_at)`;
 
-    res.json({ success: true, message: 'Database migration completed successfully' });
+    // Create product_ratings table
+    await sql`
+      CREATE TABLE IF NOT EXISTS product_ratings (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        product_id UUID REFERENCES seller_products(id) ON DELETE CASCADE,
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        rating INTEGER CHECK (rating >= 1 AND rating <= 5),
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(product_id, user_id)
+      )
+    `;
+    console.log('[admin] Created product_ratings table');
+    await sql`CREATE INDEX IF NOT EXISTS idx_product_ratings_product_id ON product_ratings(product_id)`;
+
+    // Create product_comments table (with replies support via parent_id)
+    await sql`
+      CREATE TABLE IF NOT EXISTS product_comments (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        product_id UUID REFERENCES seller_products(id) ON DELETE CASCADE,
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        parent_id UUID,
+        content TEXT NOT NULL,
+        likes_count INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `;
+    console.log('[admin] Created product_comments table');
+    await sql`CREATE INDEX IF NOT EXISTS idx_product_comments_product_id ON product_comments(product_id)`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_product_comments_parent_id ON product_comments(parent_id)`;
+
+    // Create comment_likes table
+    await sql`
+      CREATE TABLE IF NOT EXISTS comment_likes (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        comment_id UUID REFERENCES product_comments(id) ON DELETE CASCADE,
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        created_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(comment_id, user_id)
+      )
+    `;
+    console.log('[admin] Created comment_likes table');
+    await sql`CREATE INDEX IF NOT EXISTS idx_comment_likes_comment_id ON comment_likes(comment_id)`;
+
+    res.json({ success: true, message: 'Database migration completed successfully - all tables created!' });
   } catch (e) {
     console.error('[admin] db-migrate error:', e);
     res.status(500).json({ error: e.message || 'Migration failed' });
