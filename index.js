@@ -41,9 +41,37 @@ const productsRoutes = require('./routes/products');
 // 🛡️ SECURITY: Import defense system middleware
 const { securityMiddleware, getSecurityStats, getSecurityLogs } = require('./middleware/security');
 
+// 📊 PERFORMANCE: Import logger and cache
+const { logger, httpLogger } = require('./utils/logger');
+const { cache, CACHE_KEYS } = require('./utils/cache');
+
 const PORT = process.env.PORT || 4000;
 
 const app = express();
+
+// ⚡ PERFORMANCE: Enable Gzip compression
+const zlib = require('zlib');
+app.use((req, res, next) => {
+  // Check if client accepts gzip
+  const acceptEncoding = req.headers['accept-encoding'] || '';
+  if (acceptEncoding.includes('gzip')) {
+    const originalSend = res.send.bind(res);
+    res.send = function (body) {
+      // Only compress if body is string or buffer and large enough
+      if ((typeof body === 'string' || Buffer.isBuffer(body)) && body.length > 1024) {
+        zlib.gzip(body, (err, compressed) => {
+          if (err) return originalSend(body);
+          res.setHeader('Content-Encoding', 'gzip');
+          res.setHeader('Content-Length', compressed.length);
+          originalSend(compressed);
+        });
+      } else {
+        originalSend(body);
+      }
+    };
+  }
+  next();
+});
 
 // Configure CORS properly
 const allowedOrigins = [
@@ -126,11 +154,8 @@ app.use('/api/auth', (req, res, next) => {
   next();
 });
 
-// simple request logger to aid debugging
-app.use((req, res, next) => {
-  try { console.log('[backend] incoming request', req.method, req.originalUrl); } catch (e) { }
-  next();
-});
+// 📊 PERFORMANCE: HTTP request logger
+app.use(httpLogger);
 // Increase JSON body limit to allow base64 image uploads from the frontend
 app.use(bodyParser({ limit: '12mb' }));
 
