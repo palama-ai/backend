@@ -1,16 +1,35 @@
 const express = require('express');
 const router = express.Router();
+const jwt = require('jsonwebtoken');
 const { sql } = require('../db');
 const { voteOnProducts } = require('../lib/aiProviders');
 
+const JWT_SECRET = process.env.GLOWMATCH_JWT_SECRET || 'dev_secret_change_me';
+
+// Auth helper
+function authFromHeader(req) {
+    try {
+        const auth = req.headers.authorization;
+        if (!auth) return null;
+        const token = auth.replace('Bearer ', '');
+        return jwt.verify(token, JWT_SECRET);
+    } catch (e) { return null; }
+}
+
 /**
- * POST /api/products/ai-recommend
+ * POST /api/products/ai-recommend - NOW PROTECTED
  * AI-powered product recommendation using multi-model voting
  * Body:
  *   - analysis: object with skinType, concerns, confidence, explanation
  */
 router.post('/ai-recommend', async (req, res) => {
     try {
+        // Require authentication (prevents AI API abuse)
+        const payload = authFromHeader(req);
+        if (!payload || !payload.id) {
+            return res.status(401).json({ error: 'Unauthorized - authentication required for AI recommendations' });
+        }
+
         const { analysis } = req.body;
 
         if (!analysis || !analysis.skinType) {
