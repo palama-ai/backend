@@ -125,9 +125,22 @@ router.get('/history/:userId', async (req, res) => {
 
 router.get('/attempts/:id', async (req, res) => {
   try {
+    // Require authentication
+    const payload = authFromHeader(req);
+    if (!payload || !payload.id) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
     const rows = await sql`SELECT * FROM quiz_attempts WHERE id = ${req.params.id}`;
     if (!rows || rows.length === 0) return res.status(404).json({ error: 'Not found' });
+
     const row = rows[0];
+
+    // Verify user can only view their own attempts
+    if (row.user_id !== payload.id) {
+      return res.status(403).json({ error: 'You can only view your own quiz attempts' });
+    }
+
     row.quiz_data = JSON.parse(row.quiz_data);
     row.results = JSON.parse(row.results || '{}');
     res.json({ data: row });
