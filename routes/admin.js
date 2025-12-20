@@ -371,6 +371,27 @@ router.post('/settings/signup-block', requireAdmin, async (req, res) => {
   }
 });
 
+// List all products (admin only)
+router.get('/products', requireAdmin, async (req, res) => {
+  try {
+    console.log('[admin] GET /products called');
+    const products = await sql`
+      SELECT 
+        sp.*,
+        u.email as seller_email,
+        u.full_name as seller_name
+      FROM seller_products sp
+      LEFT JOIN users u ON sp.seller_id = u.id
+      ORDER BY sp.created_at DESC
+    `;
+    console.log('[admin] Found', products.length, 'products');
+    res.json({ data: products });
+  } catch (e) {
+    console.error('[admin] products error:', e);
+    res.status(500).json({ error: 'Failed to list products' });
+  }
+});
+
 // List users (with profile and subscription)
 router.get('/users', requireAdmin, async (req, res) => {
   console.log('[backend/routes/admin] GET /users called by', req.admin ? req.admin.sub : 'unknown');
