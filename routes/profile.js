@@ -16,9 +16,19 @@ function authFromHeader(req) {
   }
 }
 
+// GET profile - NOW PROTECTED
 router.get('/:userId', async (req, res) => {
   const { userId } = req.params;
   try {
+    // Require authentication
+    const auth = authFromHeader(req);
+    if (!auth || !auth.id) return res.status(401).json({ error: 'Unauthorized' });
+
+    // Verify user can only access their own profile
+    if (auth.id !== userId) {
+      return res.status(403).json({ error: 'You can only access your own profile' });
+    }
+
     // First try to get profile from user_profiles
     const profileResult = await sql`SELECT * FROM user_profiles WHERE id = ${userId}`;
     let profile = profileResult && profileResult.length > 0 ? profileResult[0] : null;
