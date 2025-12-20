@@ -38,6 +38,9 @@ const notificationsRoutes = require('./routes/notifications');
 const sellerRoutes = require('./routes/seller');
 const productsRoutes = require('./routes/products');
 
+// 🛡️ SECURITY: Import defense system middleware
+const { securityMiddleware, getSecurityStats, getSecurityLogs } = require('./middleware/security');
+
 const PORT = process.env.PORT || 4000;
 
 const app = express();
@@ -128,6 +131,9 @@ app.use((req, res, next) => {
 });
 // Increase JSON body limit to allow base64 image uploads from the frontend
 app.use(bodyParser({ limit: '12mb' }));
+
+// 🛡️ SECURITY: Apply global security middleware (IP filter, rate limit, validation)
+app.use(securityMiddleware);
 
 // Debug: show whether critical API keys are present (do NOT log their values)
 try {
