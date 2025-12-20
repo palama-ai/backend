@@ -20,6 +20,21 @@ router.post('/signup', async (req, res) => {
     // Validate accountType - only allow 'user' or 'seller'
     const role = accountType === 'seller' ? 'seller' : 'user';
 
+    // Check if signup is blocked for this account type
+    try {
+      const blockKey = role === 'seller' ? 'block_seller_signup' : 'block_user_signup';
+      const blockRow = await sql`SELECT value FROM site_settings WHERE key = ${blockKey}`;
+      if (blockRow && blockRow.length > 0 && blockRow[0].value === 'true') {
+        const message = role === 'seller'
+          ? 'تسجيل حسابات البائعين معطل مؤقتاً. يرجى المحاولة لاحقاً.'
+          : 'تسجيل حسابات المستخدمين معطل مؤقتاً. يرجى المحاولة لاحقاً.';
+        return res.status(403).json({ error: 'Signup blocked', message });
+      }
+    } catch (e) {
+      // If site_settings table doesn't exist yet, allow signup
+      console.warn('[auth] Could not check signup block status:', e?.message);
+    }
+
     // Check if user already exists
     const existing = await sql`SELECT id FROM users WHERE email = ${email}`;
     if (existing && existing.length > 0) return res.status(409).json({ error: 'User already exists' });
