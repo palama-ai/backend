@@ -8,6 +8,49 @@ const JWT_SECRET = process.env.GLOWMATCH_JWT_SECRET || 'dev_secret_change_me';
 
 console.log('[backend/routes/admin] admin routes loaded');
 
+// Initialize site_settings table if not exists
+(async () => {
+  try {
+    await sql`
+      CREATE TABLE IF NOT EXISTS site_settings (
+        key VARCHAR(100) PRIMARY KEY,
+        value TEXT,
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `;
+    // Initialize default signup block settings if not exist
+    await sql`
+      INSERT INTO site_settings (key, value, updated_at)
+      VALUES ('block_user_signup', 'false', NOW())
+      ON CONFLICT (key) DO NOTHING
+    `;
+    await sql`
+      INSERT INTO site_settings (key, value, updated_at)
+      VALUES ('block_seller_signup', 'false', NOW())
+      ON CONFLICT (key) DO NOTHING
+    `;
+    console.log('[backend/routes/admin] site_settings table ready');
+  } catch (e) {
+    console.warn('[backend/routes/admin] site_settings init warning:', e?.message);
+  }
+})();
+
+// Public endpoint: Get signup block status (no auth required)
+router.get('/signup-status', async (req, res) => {
+  try {
+    const rows = await sql`SELECT key, value FROM site_settings WHERE key IN ('block_user_signup', 'block_seller_signup')`;
+    const result = { blockUserSignup: false, blockSellerSignup: false };
+    for (const row of rows) {
+      if (row.key === 'block_user_signup') result.blockUserSignup = row.value === 'true';
+      if (row.key === 'block_seller_signup') result.blockSellerSignup = row.value === 'true';
+    }
+    res.json({ data: result });
+  } catch (e) {
+    console.error('[admin] signup-status error:', e?.message);
+    res.json({ data: { blockUserSignup: false, blockSellerSignup: false } });
+  }
+});
+
 // Unprotected debug endpoints (dev only) to help diagnose issues from the frontend
 router.get('/debug/users', async (req, res) => {
   try {
@@ -273,6 +316,60 @@ function requireAdmin(req, res, next) {
     return res.status(401).json({ error: 'Invalid token' });
   }
 }
+
+// Get signup block settings (admin only)
+router.get('/settings/signup-block', requireAdmin, async (req, res) => {
+  try {
+    const rows = await sql`SELECT key, value FROM site_settings WHERE key IN ('block_user_signup', 'block_seller_signup')`;
+    const result = { blockUserSignup: false, blockSellerSignup: false };
+    for (const row of rows) {
+      if (row.key === 'block_user_signup') result.blockUserSignup = row.value === 'true';
+      if (row.key === 'block_seller_signup') result.blockSellerSignup = row.value === 'true';
+    }
+    res.json({ data: result });
+  } catch (e) {
+    console.error('[admin] get signup-block error:', e?.message);
+    res.status(500).json({ error: 'Failed to get signup block settings' });
+  }
+});
+
+// Update signup block settings (admin only)
+router.post('/settings/signup-block', requireAdmin, async (req, res) => {
+  try {
+    const { blockUserSignup, blockSellerSignup } = req.body;
+    console.log('[admin] Updating signup block settings:', { blockUserSignup, blockSellerSignup });
+
+    if (typeof blockUserSignup !== 'undefined') {
+      await sql`
+        INSERT INTO site_settings (key, value, updated_at)
+        VALUES ('block_user_signup', ${blockUserSignup ? 'true' : 'false'}, NOW())
+        ON CONFLICT (key) DO UPDATE SET value = ${blockUserSignup ? 'true' : 'false'}, updated_at = NOW()
+      `;
+    }
+
+    if (typeof blockSellerSignup !== 'undefined') {
+      await sql`
+        INSERT INTO site_settings (key, value, updated_at)
+        VALUES ('block_seller_signup', ${blockSellerSignup ? 'true' : 'false'}, NOW())
+        ON CONFLICT (key) DO UPDATE SET value = ${blockSellerSignup ? 'true' : 'false'}, updated_at = NOW()
+      `;
+    }
+
+    // Return updated values
+    const rows = await sql`SELECT key, value FROM site_settings WHERE key IN ('block_user_signup', 'block_seller_signup')`;
+    const result = { blockUserSignup: false, blockSellerSignup: false };
+    for (const row of rows) {
+      if (row.key === 'block_user_signup') result.blockUserSignup = row.value === 'true';
+      if (row.key === 'block_seller_signup') result.blockSellerSignup = row.value === 'true';
+    }
+
+    console.log('[admin] Signup block settings updated:', result);
+    res.json({ data: result });
+  } catch (e) {
+    console.error('[admin] update signup-block error:', e);
+    res.status(500).json({ error: 'Failed to update signup block settings' });
+  }
+});
 
 // List users (with profile and subscription)
 router.get('/users', requireAdmin, async (req, res) => {
