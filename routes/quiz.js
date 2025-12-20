@@ -17,11 +17,14 @@ function authFromHeader(req) {
   }
 }
 
-// autosave
+// autosave - NOW PROTECTED: uses userId from JWT token
 router.post('/autosave', async (req, res) => {
   try {
-    const { userId, quiz_data } = req.body;
-    if (!userId) return res.status(400).json({ error: 'userId required' });
+    const payload = authFromHeader(req);
+    if (!payload || !payload.id) return res.status(401).json({ error: 'Unauthorized' });
+
+    const userId = payload.id; // Use userId from JWT, not from body
+    const { quiz_data } = req.body;
 
     await sql`
       INSERT INTO quiz_autosave (user_id, quiz_data, updated_at)
@@ -37,6 +40,14 @@ router.post('/autosave', async (req, res) => {
 
 router.get('/autosave/:userId', async (req, res) => {
   try {
+    const payload = authFromHeader(req);
+    if (!payload || !payload.id) return res.status(401).json({ error: 'Unauthorized' });
+
+    // Verify user can only access their own autosave
+    if (payload.id !== req.params.userId) {
+      return res.status(403).json({ error: 'You can only access your own autosave data' });
+    }
+
     const rows = await sql`SELECT quiz_data, updated_at FROM quiz_autosave WHERE user_id = ${req.params.userId}`;
     if (!rows || rows.length === 0) return res.json({ data: null });
     const row = rows[0];
@@ -50,6 +61,14 @@ router.get('/autosave/:userId', async (req, res) => {
 // delete autosave
 router.delete('/autosave/:userId', async (req, res) => {
   try {
+    const payload = authFromHeader(req);
+    if (!payload || !payload.id) return res.status(401).json({ error: 'Unauthorized' });
+
+    // Verify user can only delete their own autosave
+    if (payload.id !== req.params.userId) {
+      return res.status(403).json({ error: 'You can only delete your own autosave data' });
+    }
+
     await sql`DELETE FROM quiz_autosave WHERE user_id = ${req.params.userId}`;
     res.json({ success: true });
   } catch (err) {
@@ -58,11 +77,15 @@ router.delete('/autosave/:userId', async (req, res) => {
   }
 });
 
-// save attempt
+// save attempt - NOW PROTECTED
 router.post('/attempts', async (req, res) => {
   try {
-    const { userId, quiz_data, results, has_image_analysis } = req.body;
-    if (!userId || !quiz_data) return res.status(400).json({ error: 'userId and quiz_data required' });
+    const payload = authFromHeader(req);
+    if (!payload || !payload.id) return res.status(401).json({ error: 'Unauthorized' });
+
+    const userId = payload.id; // Use userId from JWT, not from body
+    const { quiz_data, results, has_image_analysis } = req.body;
+    if (!quiz_data) return res.status(400).json({ error: 'quiz_data required' });
     const id = uuidv4();
 
     await sql`
@@ -83,6 +106,14 @@ router.post('/attempts', async (req, res) => {
 
 router.get('/history/:userId', async (req, res) => {
   try {
+    const payload = authFromHeader(req);
+    if (!payload || !payload.id) return res.status(401).json({ error: 'Unauthorized' });
+
+    // Verify user can only access their own history
+    if (payload.id !== req.params.userId) {
+      return res.status(403).json({ error: 'You can only access your own quiz history' });
+    }
+
     const rows = await sql`SELECT id, attempt_date, quiz_data, results, has_image_analysis FROM quiz_attempts WHERE user_id = ${req.params.userId} ORDER BY attempt_date DESC`;
     const attempts = rows.map(r => ({ ...r, quiz_data: JSON.parse(r.quiz_data), results: JSON.parse(r.results || '{}') }));
     res.json({ data: attempts });
