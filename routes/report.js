@@ -1,24 +1,51 @@
 const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
+const jwt = require('jsonwebtoken');
 const { sql } = require('../db');
 
-// POST /api/report/upload
-// body: { userId, attemptId, filename, data (base64), analysis? }
+const JWT_SECRET = process.env.GLOWMATCH_JWT_SECRET || 'dev_secret_change_me';
+
+// Auth helper
+function authFromHeader(req) {
+  try {
+    const auth = req.headers.authorization;
+    if (!auth) return null;
+    const token = auth.replace('Bearer ', '');
+    return jwt.verify(token, JWT_SECRET);
+  } catch (e) { return null; }
+}
+
+// POST /api/report/upload - NOW PROTECTED
+// body: { attemptId, filename, data (base64), analysis? }
 // NOTE: File storage is no longer supported in serverless (Vercel is read-only)
-// Instead, store reference in database and recommend using external storage (S3, Cloudinary, etc)
 router.post('/upload', async (req, res) => {
   try {
-    const { userId, attemptId, filename, data, analysis } = req.body;
-    if (!userId || !filename || !data) return res.status(400).json({ error: 'userId, filename and data are required' });
+    // Require authentication
+    const payload = authFromHeader(req);
+    if (!payload || !payload.id) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
 
-    // In serverless, we don't write files to disk. Store metadata in DB and recommend S3/external storage
-    const publicUrl = null; // Would be filled in if using external storage
+    const { attemptId, filename, data, analysis } = req.body;
+    if (!filename || !data) return res.status(400).json({ error: 'filename and data are required' });
+
+    // In serverless, we don't write files to disk
+    const publicUrl = null;
     const storagePath = null;
 
-    // If attemptId provided, attach to DB
+    // If attemptId provided, verify ownership and attach to DB
     if (attemptId) {
       try {
+        // Verify the attempt belongs to this user
+        const attempt = await sql`SELECT id, user_id FROM quiz_attempts WHERE id = ${attemptId}`;
+        if (!attempt || attempt.length === 0) {
+          return res.status(404).json({ error: 'Attempt not found' });
+        }
+        if (attempt[0].user_id !== payload.id) {
+          return res.status(403).json({ error: 'You can only update your own quiz attempts' });
+        }
+
         const analysisText = (analysis && typeof analysis === 'object') ? JSON.stringify(analysis) : (analysis || null);
         await sql`
           UPDATE quiz_attempts
@@ -30,16 +57,16 @@ router.post('/upload', async (req, res) => {
       }
     }
 
-    res.json({ 
-      data: { 
-        publicUrl, 
+    res.json({
+      data: {
+        publicUrl,
         path: storagePath,
         message: 'Note: File storage disabled on serverless. Use S3 or Cloudinary for production.'
-      } 
+      }
     });
   } catch (err) {
     console.error('report upload error', err);
-    res.status(500).json({ error: 'Upload failed', details: err?.message || String(err) });
+    res.status(500).json({ error: 'Upload failed' });
   }
 });
 
