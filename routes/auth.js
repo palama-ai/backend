@@ -204,8 +204,27 @@ router.post('/login', async (req, res) => {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
 
+    // 🛡️ SECURITY: Check brute force protection
+    if (req.security) {
+      const bruteCheck = req.security.checkBruteForce(email);
+      if (!bruteCheck.allowed) {
+        return res.status(423).json({
+          error: 'Account locked',
+          message: bruteCheck.reason
+        });
+      }
+      // Warn about remaining attempts
+      if (bruteCheck.attemptsLeft <= 2) {
+        res.set('X-Attempts-Remaining', bruteCheck.attemptsLeft);
+      }
+    }
+
     const userResult = await sql`SELECT * FROM users WHERE email = ${email}`;
-    if (!userResult || userResult.length === 0) return res.status(401).json({ error: 'Invalid credentials' });
+    if (!userResult || userResult.length === 0) {
+      // Record failed login attempt
+      if (req.security) req.security.recordFailedLogin(email);
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
 
     const user = userResult[0];
 
@@ -215,7 +234,14 @@ router.post('/login', async (req, res) => {
     }
 
     const ok = await bcrypt.compare(password, user.password_hash);
-    if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+    if (!ok) {
+      // Record failed login attempt
+      if (req.security) req.security.recordFailedLogin(email);
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    // Successful login - clear failed attempts
+    if (req.security) req.security.clearLoginAttempts(email);
 
     const token = signToken({ id: user.id, email: user.email, role: user.role });
 
@@ -314,3 +340,126 @@ router.post('/reset-admin', async (req, res) => {
     res.status(500).json({ error: 'Failed to reset admin' });
   }
 });
+
+// ==================== GOOGLE OAUTH ====================
+// POST /api/auth/google - Sign in or sign up with Google
+router.post('/google', async (req, res) => {
+  try {
+    const { credential, accountType } = req.body;
+
+    if (!credential) {
+      return res.status(400).json({ error: 'Google credential required' });
+    }
+
+    // Decode the Google JWT token (credential is a JWT from Google)
+    // We verify it by fetching token info from Google
+    const googleVerifyUrl = `https://oauth2.googleapis.com/tokeninfo?id_token=${credential}`;
+
+    let googleUser;
+    try {
+      const response = await fetch(googleVerifyUrl);
+      if (!response.ok) {
+        throw new Error('Invalid Google token');
+      }
+      googleUser = await response.json();
+    } catch (e) {
+      console.error('[auth/google] Token verification failed:', e.message);
+      return res.status(401).json({ error: 'Invalid Google token' });
+    }
+
+    const { email, name, picture, sub: googleId } = googleUser;
+
+    if (!email) {
+      return res.status(400).json({ error: 'Email not provided by Google' });
+    }
+
+    // Check if user exists
+    const existingUsers = await sql`SELECT * FROM users WHERE email = ${email}`;
+
+    if (existingUsers && existingUsers.length > 0) {
+      // User exists - log them in
+      const user = existingUsers[0];
+
+      // Check if user is deleted or disabled
+      if (user.deleted) {
+        return res.status(403).json({
+          error: 'Account deleted',
+          message: 'لقد تم حذف حسابك. راسل support لمعرفة المزيد.'
+        });
+      }
+      if (user.disabled) {
+        return res.status(403).json({
+          error: 'Account disabled',
+          message: user.status_message || 'تم تعطيل حسابك'
+        });
+      }
+
+      // Update Google info if needed
+      if (!user.google_id) {
+        try {
+          await sql`UPDATE users SET google_id = ${googleId}, avatar_url = ${picture || user.avatar_url} WHERE id = ${user.id}`;
+        } catch (e) {
+          console.warn('[auth/google] Failed to update google_id:', e.message);
+        }
+      }
+
+      const token = signToken({ id: user.id, email: user.email, role: user.role });
+      return res.json({
+        data: {
+          user: {
+            id: user.id,
+            email: user.email,
+            full_name: user.full_name,
+            role: user.role,
+            avatar_url: user.avatar_url || picture
+          },
+          token,
+          isNewUser: false
+        }
+      });
+    }
+
+    // User doesn't exist - create new account
+    const role = accountType === 'seller' ? 'seller' : 'user';
+    const id = uuidv4();
+    const myReferralCode = uuidv4().slice(0, 8).toUpperCase();
+
+    // Create user without password (Google-only account)
+    await sql`
+      INSERT INTO users (id, email, password_hash, full_name, role, referral_code, google_id, avatar_url, created_at, updated_at)
+      VALUES (${id}, ${email}, '', ${name || email.split('@')[0]}, ${role}, ${myReferralCode}, ${googleId}, ${picture || null}, NOW(), NOW())
+    `;
+
+    // Create subscription for new user
+    const subId = uuidv4();
+    const now = new Date().toISOString();
+    const far = new Date();
+    far.setFullYear(far.getFullYear() + 100);
+    await sql`
+      INSERT INTO user_subscriptions (id, user_id, status, plan_id, current_period_start, current_period_end, quiz_attempts_used, quiz_attempts_limit, updated_at)
+      VALUES (${subId}, ${id}, 'active', null, ${now}, ${far.toISOString()}, 0, 2, ${now})
+    `;
+
+    const token = signToken({ id, email, role });
+    res.json({
+      data: {
+        user: {
+          id,
+          email,
+          full_name: name || email.split('@')[0],
+          role,
+          referral_code: myReferralCode,
+          avatar_url: picture
+        },
+        token,
+        isNewUser: true
+      }
+    });
+
+  } catch (err) {
+    console.error('[auth/google] Error:', err);
+    res.status(500).json({ error: 'Google authentication failed' });
+  }
+});
+
+module.exports = router;
