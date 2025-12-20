@@ -51,9 +51,23 @@ router.get('/signup-status', async (req, res) => {
   }
 });
 
-// Unprotected debug endpoints (dev only) to help diagnose issues from the frontend
+// Helper to check admin auth (used before requireAdmin middleware is defined)
+function checkAdminAuth(req) {
+  try {
+    const auth = req.headers.authorization;
+    if (!auth) return null;
+    const token = auth.replace('Bearer ', '');
+    const payload = jwt.verify(token, JWT_SECRET);
+    return payload?.role === 'admin' ? payload : null;
+  } catch (e) { return null; }
+}
+
+// Debug endpoints - NOW PROTECTED (require admin auth)
 router.get('/debug/users', async (req, res) => {
   try {
+    const admin = checkAdminAuth(req);
+    if (!admin) return res.status(403).json({ error: 'Admin access required' });
+
     const users = await sql`SELECT u.id, u.email, u.full_name, u.role, u.disabled FROM users u ORDER BY u.created_at DESC`;
 
     const enriched = [];
@@ -64,12 +78,15 @@ router.get('/debug/users', async (req, res) => {
     res.json({ data: enriched });
   } catch (e) {
     console.error('[backend/routes/admin] debug/users error', e && e.stack ? e.stack : e);
-    res.status(500).json({ error: 'Failed to list users (debug)' });
+    res.status(500).json({ error: 'Failed to list users' });
   }
 });
 
 router.get('/debug/stats', async (req, res) => {
   try {
+    const admin = checkAdminAuth(req);
+    if (!admin) return res.status(403).json({ error: 'Admin access required' });
+
     const totalRow = await sql`SELECT COUNT(*) as total FROM users`;
     const total = totalRow && totalRow.length > 0 ? parseInt(totalRow[0].total) : 0;
 
@@ -89,7 +106,7 @@ router.get('/debug/stats', async (req, res) => {
     res.json({ data: { total, active, disabled, subscribed, planBreakdown } });
   } catch (e) {
     console.error('[backend/routes/admin] debug/stats error', e && e.stack ? e.stack : e);
-    res.status(500).json({ error: 'Failed to compute stats (debug)' });
+    res.status(500).json({ error: 'Failed to compute stats' });
   }
 });
 
