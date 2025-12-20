@@ -6,16 +6,45 @@ const { v4: uuidv4 } = require('uuid');
 const { sql } = require('../db');
 
 const JWT_SECRET = process.env.GLOWMATCH_JWT_SECRET || 'dev_secret_change_me';
-const TOKEN_EXPIRY = '30d';
+const TOKEN_EXPIRY = '7d'; // SECURITY: Reduced from 30d to 7d
 
 function signToken(user) {
   return jwt.sign({ id: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
+}
+
+// SECURITY: Password complexity validation
+function validatePassword(password) {
+  const errors = [];
+
+  if (password.length < 8) {
+    errors.push('كلمة المرور يجب أن تكون 8 أحرف على الأقل');
+  }
+  if (!/[A-Z]/.test(password)) {
+    errors.push('كلمة المرور يجب أن تحتوي على حرف كبير واحد على الأقل');
+  }
+  if (!/[a-z]/.test(password)) {
+    errors.push('كلمة المرور يجب أن تحتوي على حرف صغير واحد على الأقل');
+  }
+  if (!/[0-9]/.test(password)) {
+    errors.push('كلمة المرور يجب أن تحتوي على رقم واحد على الأقل');
+  }
+
+  return errors;
 }
 
 router.post('/signup', async (req, res) => {
   try {
     const { email, password, fullName, referralCode, accountType } = req.body;
     if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
+
+    // SECURITY: Validate password complexity
+    const passwordErrors = validatePassword(password);
+    if (passwordErrors.length > 0) {
+      return res.status(400).json({
+        error: 'Password does not meet requirements',
+        details: passwordErrors
+      });
+    }
 
     // Validate accountType - only allow 'user' or 'seller'
     const role = accountType === 'seller' ? 'seller' : 'user';
