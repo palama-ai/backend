@@ -5,9 +5,38 @@ const { sql } = require('../db');
 
 // Lightweight events API used by frontend to report page views and session heartbeats.
 
+// SECURITY: Simple rate limiting to prevent spam
+const rateLimitMap = new Map();
+const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
+const MAX_EVENTS_PER_MINUTE = 30; // Max events per IP per minute
+
+function checkEventsRateLimit(ip) {
+  const now = Date.now();
+  const key = `events:${ip}`;
+  const record = rateLimitMap.get(key);
+
+  if (!record || now - record.startTime > RATE_LIMIT_WINDOW_MS) {
+    rateLimitMap.set(key, { startTime: now, count: 1 });
+    return true;
+  }
+
+  if (record.count >= MAX_EVENTS_PER_MINUTE) {
+    return false;
+  }
+
+  record.count++;
+  return true;
+}
+
 // Start or upsert a session: returns session_id
 router.post('/start', async (req, res) => {
   try {
+    // Rate limit check
+    const ip = req.ip || req.connection?.remoteAddress || 'unknown';
+    if (!checkEventsRateLimit(ip)) {
+      return res.status(429).json({ error: 'Too many requests' });
+    }
+
     const { sessionId, userId, path } = req.body || {};
     const sid = sessionId || uuidv4();
     const now = new Date().toISOString();
@@ -27,6 +56,9 @@ router.post('/start', async (req, res) => {
 // Ping/heartbeat to mark session as active
 router.post('/ping', async (req, res) => {
   try {
+    const ip = req.ip || req.connection?.remoteAddress || 'unknown';
+    if (!checkEventsRateLimit(ip)) return res.status(429).json({ error: 'Too many requests' });
+
     const { sessionId, userId, path } = req.body || {};
     if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
     const now = new Date().toISOString();
@@ -47,6 +79,9 @@ router.post('/ping', async (req, res) => {
 // End a session and optionally record duration (seconds)
 router.post('/end', async (req, res) => {
   try {
+    const ip = req.ip || req.connection?.remoteAddress || 'unknown';
+    if (!checkEventsRateLimit(ip)) return res.status(429).json({ error: 'Too many requests' });
+
     const { sessionId, duration } = req.body || {};
     if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
     const now = new Date().toISOString();
@@ -61,6 +96,9 @@ router.post('/end', async (req, res) => {
 // Record a page view (visit)
 router.post('/view', async (req, res) => {
   try {
+    const ip = req.ip || req.connection?.remoteAddress || 'unknown';
+    if (!checkEventsRateLimit(ip)) return res.status(429).json({ error: 'Too many requests' });
+
     const { sessionId, userId, path } = req.body || {};
     const id = uuidv4();
     const now = new Date().toISOString();
