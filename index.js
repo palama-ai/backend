@@ -51,24 +51,26 @@ const allowedOrigins = [
   'https://glowimatch.vercel.app',
 ];
 
-// SECURITY: Only allow null origin in development
+// SECURITY: Log requests with null origin but don't block (mobile apps, health checks need this)
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
 app.use(cors({
   origin: function (origin, callback) {
-    // In production, reject requests with no origin (except for specific cases)
+    // Allow null origin (from mobile apps, server-to-server, Postman, health checks)
     if (!origin) {
-      // Allow null origin only in development or for health checks
       if (IS_PRODUCTION) {
-        console.warn('[CORS] Blocked request with null origin in production');
-        return callback(new Error('CORS not allowed - origin required'), false);
+        // Just log for monitoring, don't block
+        console.log('[CORS] Request with null origin (mobile/server/health check)');
       }
       return callback(null, true);
     }
 
+    // Allow listed origins
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
+      // Log blocked origins for debugging
+      console.warn('[CORS] Blocked origin:', origin);
       callback(new Error('CORS not allowed'));
     }
   },
