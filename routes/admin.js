@@ -110,9 +110,12 @@ router.get('/debug/stats', async (req, res) => {
   }
 });
 
-// Simple endpoint to fix URL columns - no auth required for one-time migration
+// Migration endpoint - NOW PROTECTED (admin only)
 router.post('/fix-url-columns', async (req, res) => {
   try {
+    const admin = checkAdminAuth(req);
+    if (!admin) return res.status(403).json({ error: 'Admin access required' });
+
     console.log('[admin] Running URL columns fix...');
     await sql`ALTER TABLE seller_products ALTER COLUMN image_url TYPE TEXT`;
     await sql`ALTER TABLE seller_products ALTER COLUMN purchase_url TYPE TEXT`;
@@ -124,8 +127,11 @@ router.post('/fix-url-columns', async (req, res) => {
   }
 });
 
-// Simple endpoint to create ONLY the product reviews tables - no auth required
+// Migration endpoint - NOW PROTECTED (admin only)
 router.post('/create-reviews-tables', async (req, res) => {
+  const admin = checkAdminAuth(req);
+  if (!admin) return res.status(403).json({ error: 'Admin access required' });
+
   const results = [];
   try {
     console.log('[admin] Creating product reviews tables...');
