@@ -24,13 +24,13 @@ router.get('/me', async (req, res) => {
     // prefer canonical referral_codes table
     const rc = await sql`SELECT code FROM referral_codes WHERE owner_id = ${userId}`;
     let code = rc && rc.length > 0 ? rc[0].code : null;
-    
+
     if (!code) {
       const user = await sql`SELECT id, referral_code FROM users WHERE id = ${userId}`;
       if (!user || user.length === 0) return res.status(404).json({ error: 'User not found' });
       code = user[0].referral_code;
     }
-    
+
     const frontend = process.env.VITE_FRONTEND_URL || process.env.FRONTEND_URL || 'https://glowimatch.vercel.app';
     const link = frontend ? `${frontend.replace(/\/$/, '')}/?ref=${encodeURIComponent(code)}` : `/?ref=${encodeURIComponent(code)}`;
     res.json({ data: { referral_code: code, referral_link: link } });
@@ -46,7 +46,7 @@ router.post('/create', async (req, res) => {
     const payload = authFromHeader(req);
     if (!payload || !payload.id) return res.status(401).json({ error: 'Unauthorized' });
     const userId = payload.id;
-    
+
     // If user already has a referral code in referral_codes, return it
     const existing = await sql`SELECT * FROM referral_codes WHERE owner_id = ${userId}`;
     if (existing && existing.length > 0) {
@@ -79,6 +79,7 @@ router.post('/create', async (req, res) => {
 });
 
 // GET /api/referrals/validate/:code - check if code exists and return referrer info
+// SECURITY FIX: Only return non-sensitive data (name only, no email/id)
 router.get('/validate/:code', async (req, res) => {
   try {
     const code = req.params.code;
@@ -86,12 +87,13 @@ router.get('/validate/:code', async (req, res) => {
     // Look up in referral_codes first
     const rc = await sql`SELECT * FROM referral_codes WHERE code = ${code}`;
     if (!rc || rc.length === 0) return res.status(404).json({ error: 'Invalid code' });
-    
+
     const rcRow = rc[0];
-    const userResult = await sql`SELECT id, email, full_name FROM users WHERE id = ${rcRow.owner_id}`;
+    const userResult = await sql`SELECT full_name FROM users WHERE id = ${rcRow.owner_id}`;
     const user = userResult && userResult.length > 0 ? userResult[0] : null;
-    
-    res.json({ data: { referrer: { id: user?.id, email: user?.email, full_name: user?.full_name }, uses_count: rcRow.uses_count, created_at: rcRow.created_at, last_10_reached_at: rcRow.last_10_reached_at } });
+
+    // Only return name, not email or user ID (security fix)
+    res.json({ data: { referrer: { full_name: user?.full_name || 'Anonymous' }, valid: true } });
   } catch (err) {
     console.error('referrals.validate error', err);
     res.status(500).json({ error: 'Failed to validate code' });
