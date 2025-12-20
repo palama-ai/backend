@@ -1,13 +1,32 @@
 const express = require('express');
 const router = express.Router();
+const jwt = require('jsonwebtoken');
 const { analyze } = require('../lib/aiProviders');
 const { generateRoutine } = require('../lib/aiProviders');
 const { sql } = require('../db');
 
-// POST /api/analysis
+const JWT_SECRET = process.env.GLOWMATCH_JWT_SECRET || 'dev_secret_change_me';
+
+// Helper to check auth
+function authFromHeader(req) {
+  try {
+    const auth = req.headers.authorization;
+    if (!auth) return null;
+    const token = auth.replace('Bearer ', '');
+    return jwt.verify(token, JWT_SECRET);
+  } catch (e) { return null; }
+}
+
+// POST /api/analysis - NOW PROTECTED
 // body: { quizData, images, model, attemptId }
 router.post('/', async (req, res) => {
   try {
+    // Require authentication to prevent unauthorized AI API usage
+    const payload = authFromHeader(req);
+    if (!payload || !payload.id) {
+      return res.status(401).json({ error: 'Unauthorized - authentication required for analysis' });
+    }
+
     const { quizData, images, model, attemptId } = req.body;
     // Debug: log received images info to help trace why imageAnalysis may be missing
     try {
@@ -44,7 +63,7 @@ router.post('/', async (req, res) => {
     // Log structured result for debugging (won't expose secrets)
     try {
       console.debug('Analysis result (provider):', result.provider, 'imageAnalysisPresent:', !!result.imageAnalysis || !!result.imageFeatures);
-    } catch (e) {}
+    } catch (e) { }
 
     // Normalize response: ensure analysis is an object where possible
     let analysisOut = result.text;
@@ -58,7 +77,7 @@ router.post('/', async (req, res) => {
     try {
       // Debug: print computed imageFeatures (may be null)
       console.debug('Responding with imageFeatures:', imageFeatures);
-    } catch (e) {}
+    } catch (e) { }
     // Include a small debug object in development to help troubleshooting (non-sensitive)
     const debug = {
       receivedImages: Array.isArray(images) ? images.map((im, i) => ({ idx: i, filename: im.filename || null, hasData: !!im.data, dataLength: im.data ? String(im.data).length : 0 })) : []
@@ -66,16 +85,20 @@ router.post('/', async (req, res) => {
     res.json({ data: { analysis: analysisOut, provider: result.provider, raw: result.raw || null, imageFeatures, debug } });
   } catch (err) {
     console.error('analysis error', err);
-    res.status(500).json({ error: 'Analysis failed', details: err?.message || String(err) });
+    res.status(500).json({ error: 'Analysis failed' });
   }
 });
 
-module.exports = router;
-
-// POST /api/analysis/expand
+// POST /api/analysis/expand - NOW PROTECTED
 // body: { analysis, provider }
 router.post('/expand', async (req, res) => {
   try {
+    // Require authentication
+    const payload = authFromHeader(req);
+    if (!payload || !payload.id) {
+      return res.status(401).json({ error: 'Unauthorized - authentication required' });
+    }
+
     const { analysis, provider } = req.body;
     if (!analysis) return res.status(400).json({ error: 'analysis required in body' });
     const result = await generateRoutine({ provider: provider || 'openai', analysis });
@@ -86,6 +109,8 @@ router.post('/expand', async (req, res) => {
     res.json({ data: { generated: out, provider: result.provider, raw: result.raw || null } });
   } catch (err) {
     console.error('expand analysis error', err);
-    res.status(500).json({ error: 'Expand failed', details: err?.message || String(err) });
+    res.status(500).json({ error: 'Expand failed' });
   }
 });
+
+module.exports = router;
