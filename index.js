@@ -44,18 +44,24 @@ const app = express();
 
 // Configure CORS properly
 const allowedOrigins = [
-  'http://localhost:4028',
-  'http://localhost:3000',
-  'http://localhost:5173',
   process.env.FRONTEND_URL || 'https://glowimatch.vercel.app',
   'https://glowimatch.vercel.app',
-  'https://glowimatch-ebon.vercel.app'
 ];
+
+// SECURITY: Only allow null origin in development
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
+    // In production, reject requests with no origin (except for specific cases)
+    if (!origin) {
+      // Allow null origin only in development or for health checks
+      if (IS_PRODUCTION) {
+        console.warn('[CORS] Blocked request with null origin in production');
+        return callback(new Error('CORS not allowed - origin required'), false);
+      }
+      return callback(null, true);
+    }
 
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
@@ -65,6 +71,55 @@ app.use(cors({
   },
   credentials: true
 }));
+
+// SECURITY: Add basic security headers
+app.use((req, res, next) => {
+  // Prevent MIME type sniffing
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  // Prevent clickjacking
+  res.setHeader('X-Frame-Options', 'DENY');
+  // XSS protection (for older browsers)
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  // Referrer policy
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
+
+// SECURITY: Basic rate limiting for auth endpoints
+const rateLimitMap = new Map();
+const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
+const MAX_AUTH_ATTEMPTS = 10; // Max attempts per window
+
+function checkRateLimit(key, maxAttempts = MAX_AUTH_ATTEMPTS) {
+  const now = Date.now();
+  const record = rateLimitMap.get(key);
+
+  if (!record || now - record.startTime > RATE_LIMIT_WINDOW_MS) {
+    rateLimitMap.set(key, { startTime: now, count: 1 });
+    return true;
+  }
+
+  if (record.count >= maxAttempts) {
+    return false;
+  }
+
+  record.count++;
+  return true;
+}
+
+// Rate limit middleware for auth endpoints
+app.use('/api/auth', (req, res, next) => {
+  const ip = req.ip || req.connection.remoteAddress || 'unknown';
+  const key = `auth:${ip}`;
+
+  if (!checkRateLimit(key)) {
+    return res.status(429).json({
+      error: 'Too many requests. Please try again later.',
+      retryAfter: Math.ceil(RATE_LIMIT_WINDOW_MS / 1000 / 60) + ' minutes'
+    });
+  }
+  next();
+});
 
 // simple request logger to aid debugging
 app.use((req, res, next) => {
