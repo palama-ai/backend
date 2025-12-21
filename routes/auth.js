@@ -17,16 +17,16 @@ function validatePassword(password) {
   const errors = [];
 
   if (password.length < 8) {
-    errors.push('كلمة المرور يجب أن تكون 8 أحرف على الأقل');
+    errors.push('Password must be at least 8 characters');
   }
   if (!/[A-Z]/.test(password)) {
-    errors.push('كلمة المرور يجب أن تحتوي على حرف كبير واحد على الأقل');
+    errors.push('Password must contain at least one uppercase letter');
   }
   if (!/[a-z]/.test(password)) {
-    errors.push('كلمة المرور يجب أن تحتوي على حرف صغير واحد على الأقل');
+    errors.push('Password must contain at least one lowercase letter');
   }
   if (!/[0-9]/.test(password)) {
-    errors.push('كلمة المرور يجب أن تحتوي على رقم واحد على الأقل');
+    errors.push('Password must contain at least one number');
   }
 
   return errors;
@@ -55,8 +55,8 @@ router.post('/signup', async (req, res) => {
       const blockRow = await sql`SELECT value FROM site_settings WHERE key = ${blockKey}`;
       if (blockRow && blockRow.length > 0 && blockRow[0].value === 'true') {
         const message = role === 'seller'
-          ? 'تسجيل حسابات البائعين معطل مؤقتاً. يرجى المحاولة لاحقاً.'
-          : 'تسجيل حسابات المستخدمين معطل مؤقتاً. يرجى المحاولة لاحقاً.';
+          ? 'Seller registration is temporarily disabled. Please try again later.'
+          : 'User registration is temporarily disabled. Please try again later.';
         return res.status(403).json({ error: 'Signup blocked', message });
       }
     } catch (e) {
@@ -230,7 +230,7 @@ router.post('/login', async (req, res) => {
 
     // If user is deleted, block login and return an explanatory message
     if (user.deleted) {
-      return res.status(403).json({ error: 'Account deleted', message: 'لقد تم حذف حسابك. راسل support لمعرفة المزيد.' });
+      return res.status(403).json({ error: 'Account deleted', message: 'Your account has been deleted. Contact support for more information.' });
     }
 
     const ok = await bcrypt.compare(password, user.password_hash);
@@ -247,7 +247,7 @@ router.post('/login', async (req, res) => {
 
     // If user is disabled, block login and return explanatory message
     if (user.disabled) {
-      const msg = user.status_message || 'لقد تم تعطيل حسابك بسبب مخالفتك لسياسات الاستخدام. يرجى التواصل مع support لمزيد من المعلومات.';
+      const msg = user.status_message || 'Your account has been disabled due to policy violations. Please contact support for more information.';
       return res.status(403).json({ error: 'Account disabled', message: msg });
     }
 
@@ -273,7 +273,7 @@ router.get('/session', async (req, res) => {
     const user = userResult[0];
 
     // If deleted, return null session to force re-login and surface message via client (client may call a debug endpoint)
-    if (user.deleted) return res.status(200).json({ data: { session: null, deleted: true, message: 'لقد تم حذف حسابك. راسل support لمعرفة المزيد.' } });
+    if (user.deleted) return res.status(200).json({ data: { session: null, deleted: true, message: 'Your account has been deleted. Contact support for more information.' } });
 
     const session = { user: { id: user.id, email: user.email, full_name: user.full_name, role: user.role, disabled: !!user.disabled, status_message: user.status_message || null } };
     return res.json({ data: { session } });
@@ -384,13 +384,13 @@ router.post('/google', async (req, res) => {
       if (user.deleted) {
         return res.status(403).json({
           error: 'Account deleted',
-          message: 'لقد تم حذف حسابك. راسل support لمعرفة المزيد.'
+          message: 'Your account has been deleted. Contact support for more information.'
         });
       }
       if (user.disabled) {
         return res.status(403).json({
           error: 'Account disabled',
-          message: user.status_message || 'تم تعطيل حسابك'
+          message: user.status_message || 'Your account has been disabled'
         });
       }
 
