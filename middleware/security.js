@@ -55,7 +55,7 @@ function checkBruteForce(ip, email) {
         const remainingMin = Math.ceil(remainingMs / 60000);
         return {
             allowed: false,
-            reason: `الحساب مقفل. حاول مجدداً بعد ${remainingMin} دقيقة`,
+            reason: `Account locked. Try again in ${remainingMin} minute(s)`,
             lockedUntil: record.lockedUntil
         };
     }
@@ -220,7 +220,7 @@ function securityMiddleware(req, res, next) {
         logSecurityEvent('BLOCKED_IP', ip, { endpoint });
         return res.status(403).json({
             error: 'Access denied',
-            message: 'تم حظر الوصول من هذا العنوان'
+            message: 'Access denied from this address'
         });
     }
 
@@ -231,7 +231,7 @@ function securityMiddleware(req, res, next) {
         res.set('Retry-After', rateCheck.retryAfter);
         return res.status(429).json({
             error: 'Too many requests',
-            message: 'طلبات كثيرة جداً. حاول لاحقاً',
+            message: 'Too many requests. Please try again later.',
             retryAfter: rateCheck.retryAfter
         });
     }
@@ -242,7 +242,7 @@ function securityMiddleware(req, res, next) {
         logSecurityEvent('INVALID_REQUEST', ip, { endpoint, issues: validation.issues });
         return res.status(400).json({
             error: 'Invalid request',
-            message: 'طلب غير صالح'
+            message: 'Invalid request'
         });
     }
 
