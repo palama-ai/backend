@@ -253,9 +253,6 @@ app.use('/api/seller', sellerRoutes);
 app.use('/api/products', productsRoutes);
 app.use('/api/upload', uploadRoutes);
 
-// Serve uploaded product images as static files
-app.use('/uploads/products', express.static(path.join(__dirname, 'uploads', 'products')));
-
 // Basic API root - helpful for health checks and to avoid "Cannot GET /api" responses
 app.get('/api', (req, res) => {
   try {
