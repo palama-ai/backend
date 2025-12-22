@@ -37,6 +37,7 @@ const referralsRoutes = require('./routes/referrals');
 const notificationsRoutes = require('./routes/notifications');
 const sellerRoutes = require('./routes/seller');
 const productsRoutes = require('./routes/products');
+const uploadRoutes = require('./routes/upload');
 
 // 🛡️ SECURITY: Import defense system middleware
 const { securityMiddleware, getSecurityStats, getSecurityLogs } = require('./middleware/security');
@@ -250,6 +251,10 @@ app.use('/api/referrals', referralsRoutes);
 app.use('/api/notifications', notificationsRoutes);
 app.use('/api/seller', sellerRoutes);
 app.use('/api/products', productsRoutes);
+app.use('/api/upload', uploadRoutes);
+
+// Serve uploaded product images as static files
+app.use('/uploads/products', express.static(path.join(__dirname, 'uploads', 'products')));
 
 // Basic API root - helpful for health checks and to avoid "Cannot GET /api" responses
 app.get('/api', (req, res) => {
