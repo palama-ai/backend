@@ -282,6 +282,117 @@ router.get('/session', async (req, res) => {
   }
 });
 
+// ==================== PASSWORD RESET ====================
+// POST /api/auth/forgot-password - Request password reset code
+router.post('/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email is required' });
+
+    // Check if user exists
+    const userResult = await sql`SELECT id, email FROM users WHERE email = ${email}`;
+    if (!userResult || userResult.length === 0) {
+      // Don't reveal if user exists or not for security
+      return res.json({
+        success: true,
+        message: 'If an account with this email exists, a reset code has been generated.'
+      });
+    }
+
+    const user = userResult[0];
+
+    // Generate 6-digit reset code
+    const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 minutes
+
+    // Store reset code in database
+    await sql`
+      UPDATE users 
+      SET reset_code = ${resetCode}, reset_code_expires = ${expiresAt}
+      WHERE id = ${user.id}
+    `;
+
+    // NOTE: In production, send email with code. For now, return code directly.
+    console.log(`[auth] Password reset code for ${email}: ${resetCode}`);
+
+    res.json({
+      success: true,
+      message: 'Reset code generated successfully.',
+      // In development, show code. In production, remove this and send via email.
+      code: resetCode,
+      expiresIn: '15 minutes'
+    });
+
+  } catch (err) {
+    console.error('[auth] forgot-password error:', err);
+    res.status(500).json({ error: 'Failed to process reset request' });
+  }
+});
+
+// POST /api/auth/reset-password - Reset password with code
+router.post('/reset-password', async (req, res) => {
+  try {
+    const { email, code, newPassword } = req.body;
+
+    if (!email || !code || !newPassword) {
+      return res.status(400).json({ error: 'Email, code, and new password are required' });
+    }
+
+    // Validate password complexity
+    const passwordErrors = validatePassword(newPassword);
+    if (passwordErrors.length > 0) {
+      return res.status(400).json({
+        error: 'Password does not meet requirements',
+        details: passwordErrors
+      });
+    }
+
+    // Find user with matching email and code
+    const userResult = await sql`
+      SELECT id, email, reset_code, reset_code_expires 
+      FROM users 
+      WHERE email = ${email}
+    `;
+
+    if (!userResult || userResult.length === 0) {
+      return res.status(400).json({ error: 'Invalid email or code' });
+    }
+
+    const user = userResult[0];
+
+    // Check if code matches
+    if (user.reset_code !== code) {
+      return res.status(400).json({ error: 'Invalid reset code' });
+    }
+
+    // Check if code is expired
+    if (user.reset_code_expires && new Date(user.reset_code_expires) < new Date()) {
+      return res.status(400).json({ error: 'Reset code has expired. Please request a new one.' });
+    }
+
+    // Hash new password
+    const password_hash = await bcrypt.hash(newPassword, 10);
+
+    // Update password and clear reset code
+    await sql`
+      UPDATE users 
+      SET password_hash = ${password_hash}, reset_code = NULL, reset_code_expires = NULL
+      WHERE id = ${user.id}
+    `;
+
+    console.log(`[auth] Password reset successful for ${email}`);
+
+    res.json({
+      success: true,
+      message: 'Password has been reset successfully. You can now login with your new password.'
+    });
+
+  } catch (err) {
+    console.error('[auth] reset-password error:', err);
+    res.status(500).json({ error: 'Failed to reset password' });
+  }
+});
+
 module.exports = router;
 
 // ADMIN RESET ENDPOINT (temporary): upsert the default admin account using
