@@ -463,6 +463,52 @@ router.post('/reset-admin', async (req, res) => {
 });
 
 // ==================== GOOGLE OAUTH ====================
+
+// POST /api/auth/google-check - Check if Google user exists (without creating account)
+router.post('/google-check', async (req, res) => {
+  try {
+    const { credential } = req.body;
+
+    if (!credential) {
+      return res.status(400).json({ error: 'Google credential required' });
+    }
+
+    // Verify the Google token
+    const googleVerifyUrl = `https://oauth2.googleapis.com/tokeninfo?id_token=${credential}`;
+
+    let googleUser;
+    try {
+      const response = await fetch(googleVerifyUrl);
+      if (!response.ok) {
+        throw new Error('Invalid Google token');
+      }
+      googleUser = await response.json();
+    } catch (e) {
+      console.error('[auth/google-check] Token verification failed:', e.message);
+      return res.status(401).json({ error: 'Invalid Google token' });
+    }
+
+    const { email, name } = googleUser;
+
+    if (!email) {
+      return res.status(400).json({ error: 'Email not provided by Google' });
+    }
+
+    // Check if user exists
+    const existingUsers = await sql`SELECT id, email, role FROM users WHERE email = ${email}`;
+
+    if (existingUsers && existingUsers.length > 0) {
+      return res.json({ exists: true, email, name });
+    } else {
+      return res.json({ exists: false, email, name });
+    }
+
+  } catch (err) {
+    console.error('[auth/google-check] Error:', err);
+    res.status(500).json({ error: 'Failed to check user' });
+  }
+});
+
 // POST /api/auth/google - Sign in or sign up with Google
 router.post('/google', async (req, res) => {
   try {
