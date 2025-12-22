@@ -1,32 +1,33 @@
 {
-	"name": "glowmatch-backend",
-	"version": "0.1.0",
-	"main": "index.js",
-	"type": "commonjs",
-	"scripts": {
-		"start": "node index.js",
-		"dev": "nodemon index.js"
-	},
-	"dependencies": {
-		"@neondatabase/serverless": "^0.9.2",
-		"@prisma/client": "^5.6.0",
-		"bcrypt": "^6.0.0",
-		"cloudinary": "^2.8.0",
-		"cors": "^2.8.5",
-		"dotenv": "^17.2.3",
-		"express": "^5.1.0",
-		"jimp": "^0.16.1",
-		"jsonwebtoken": "^9.0.2",
-		"multer": "^2.0.2",
-		"node-fetch": "^2.7.0",
-		"pg": "^8.10.0",
-		"prisma": "^5.6.0",
-		"uuid": "^9.0.0"
-	},
-	"devDependencies": {
-		"nodemon": "^3.1.10"
-	},
-	"prisma": {
-		"seed": "node ./scripts/migrate_sqlite_to_postgres.js"
-	}
+  "name": "glowmatch-backend",
+  "version": "0.1.0",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^0.9.2",
+    "@prisma/client": "^5.6.0",
+    "bcrypt": "^6.0.0",
+    "cloudinary": "^2.8.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "jimp": "^0.16.1",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.2",
+    "node-fetch": "^2.7.0",
+    "nodemailer": "^7.0.12",
+    "pg": "^8.10.0",
+    "prisma": "^5.6.0",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  },
+  "prisma": {
+    "seed": "node ./scripts/migrate_sqlite_to_postgres.js"
+  }
 }
