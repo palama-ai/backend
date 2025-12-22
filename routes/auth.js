@@ -4,6 +4,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const { sql } = require('../db');
+const { sendPasswordResetCode } = require('../utils/email');
 
 const JWT_SECRET = process.env.GLOWMATCH_JWT_SECRET || 'dev_secret_change_me';
 const TOKEN_EXPIRY = '7d'; // SECURITY: Reduced from 30d to 7d
@@ -312,16 +313,25 @@ router.post('/forgot-password', async (req, res) => {
       WHERE id = ${user.id}
     `;
 
-    // NOTE: In production, send email with code. For now, return code directly.
-    console.log(`[auth] Password reset code for ${email}: ${resetCode}`);
+    // Send reset code via email
+    const emailResult = await sendPasswordResetCode(email, resetCode);
 
-    res.json({
-      success: true,
-      message: 'Reset code generated successfully.',
-      // In development, show code. In production, remove this and send via email.
-      code: resetCode,
-      expiresIn: '15 minutes'
-    });
+    if (emailResult.success) {
+      console.log(`[auth] Password reset code sent to ${email}`);
+      res.json({
+        success: true,
+        message: 'If an account with this email exists, a reset code has been sent to your email.',
+        expiresIn: '15 minutes'
+      });
+    } else {
+      // If email fails but SMTP not configured, log code for development
+      console.log(`[auth] Password reset code for ${email}: ${resetCode} (email not sent: ${emailResult.reason})`);
+      res.json({
+        success: true,
+        message: 'Reset code generated. Check your email (or server logs if SMTP not configured).',
+        expiresIn: '15 minutes'
+      });
+    }
 
   } catch (err) {
     console.error('[auth] forgot-password error:', err);
