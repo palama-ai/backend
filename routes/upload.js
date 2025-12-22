@@ -1,31 +1,21 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
 const jwt = require('jsonwebtoken');
 const { sql } = require('../db');
+const cloudinary = require('cloudinary').v2;
 
 const JWT_SECRET = process.env.GLOWMATCH_JWT_SECRET || 'dev_secret_change_me';
 
-// Ensure uploads directory exists
-const uploadsDir = path.join(__dirname, '..', 'uploads', 'products');
-if (!fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir, { recursive: true });
-}
-
-// Configure multer storage
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        cb(null, uploadsDir);
-    },
-    filename: (req, file, cb) => {
-        const timestamp = Date.now();
-        const random = Math.random().toString(36).substring(2, 8);
-        const ext = path.extname(file.originalname).toLowerCase();
-        cb(null, `${timestamp}-${random}${ext}`);
-    }
+// Configure Cloudinary
+cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET
 });
+
+// Configure multer for memory storage (no disk write)
+const storage = multer.memoryStorage();
 
 // File filter - only allow images
 const fileFilter = (req, file, cb) => {
@@ -69,29 +59,63 @@ const requireAuth = async (req, res, next) => {
     }
 };
 
-// POST /api/upload/image - Upload a single image
-router.post('/image', requireAuth, upload.single('image'), (req, res) => {
+// Helper function to upload buffer to Cloudinary
+const uploadToCloudinary = (buffer, folder = 'products') => {
+    return new Promise((resolve, reject) => {
+        const uploadStream = cloudinary.uploader.upload_stream(
+            {
+                folder: `glowimatch/${folder}`,
+                resource_type: 'image',
+                transformation: [
+                    { width: 800, height: 800, crop: 'limit' }, // Resize to max 800x800
+                    { quality: 'auto:good' }, // Auto optimize quality
+                    { fetch_format: 'auto' } // Auto format (webp when supported)
+                ]
+            },
+            (error, result) => {
+                if (error) {
+                    reject(error);
+                } else {
+                    resolve(result);
+                }
+            }
+        );
+        uploadStream.end(buffer);
+    });
+};
+
+// POST /api/upload/image - Upload a single image to Cloudinary
+router.post('/image', requireAuth, upload.single('image'), async (req, res) => {
     try {
         if (!req.file) {
             return res.status(400).json({ error: 'No image file provided' });
         }
 
-        // Construct the public URL
-        const baseUrl = process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`;
-        const imageUrl = `${baseUrl}/uploads/products/${req.file.filename}`;
+        // Check if Cloudinary is configured
+        if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) {
+            return res.status(500).json({
+                error: 'Cloudinary not configured',
+                message: 'Please set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET in environment variables'
+            });
+        }
+
+        // Upload to Cloudinary
+        const result = await uploadToCloudinary(req.file.buffer, 'products');
 
         res.json({
             success: true,
             data: {
-                url: imageUrl,
-                filename: req.file.filename,
-                originalName: req.file.originalname,
-                size: req.file.size
+                url: result.secure_url,
+                publicId: result.public_id,
+                width: result.width,
+                height: result.height,
+                format: result.format,
+                size: result.bytes
             }
         });
     } catch (err) {
         console.error('[upload] Error uploading image:', err);
-        res.status(500).json({ error: 'Failed to upload image' });
+        res.status(500).json({ error: 'Failed to upload image', message: err.message });
     }
 });
 
