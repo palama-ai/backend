@@ -3,10 +3,12 @@ const router = express.Router();
 const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const { sql } = require('../db');
+const { immediateCheck } = require('../lib/ingredientScanner');
+const { applyPenalty, getAccountStatus, getViolationHistory, submitAppeal } = require('../lib/penaltyService');
 
 const JWT_SECRET = process.env.GLOWMATCH_JWT_SECRET || 'dev_secret_change_me';
 
-// Middleware to authenticate seller
+// Middleware to authenticate seller and check account status
 const requireSeller = async (req, res, next) => {
     try {
         const authHeader = req.headers.authorization;
@@ -18,7 +20,7 @@ const requireSeller = async (req, res, next) => {
         const decoded = jwt.verify(token, JWT_SECRET);
 
         // Check if user exists and is a seller
-        const users = await sql`SELECT id, email, role FROM users WHERE id = ${decoded.id}`;
+        const users = await sql`SELECT id, email, role, account_status, violation_count, is_under_probation FROM users WHERE id = ${decoded.id}`;
         if (!users || users.length === 0) {
             return res.status(401).json({ error: 'User not found' });
         }
@@ -26,6 +28,26 @@ const requireSeller = async (req, res, next) => {
         const user = users[0];
         if (user.role !== 'seller' && user.role !== 'admin') {
             return res.status(403).json({ error: 'Seller access required' });
+        }
+
+        // EXCEPTION: Allow locked users to access appeal-related endpoints
+        const appealPaths = ['/appeals', '/violations', '/account-status'];
+        const isAppealPath = appealPaths.some(p => req.path.includes(p));
+
+        // Check account status - block LOCKED or BANNED sellers (except for appeals)
+        if (user.account_status === 'LOCKED' && !isAppealPath) {
+            return res.status(403).json({
+                error: 'Account locked due to safety violations',
+                code: 'ACCOUNT_LOCKED',
+                message: 'Your account has been locked due to repeated safety violations. You can still submit an appeal via /api/seller/appeals'
+            });
+        }
+        if (user.account_status === 'BANNED' && !isAppealPath) {
+            return res.status(403).json({
+                error: 'Account permanently banned',
+                code: 'ACCOUNT_BANNED',
+                message: 'Your account has been permanently banned for repeated safety violations.'
+            });
         }
 
         req.user = user;
@@ -50,13 +72,50 @@ router.get('/products', requireSeller, async (req, res) => {
     }
 });
 
-// Create new product
+// Create new product with ingredient safety check
 router.post('/products', requireSeller, async (req, res) => {
     try {
-        const { name, brand, description, price, original_price, image_url, category, skin_types, concerns, purchase_url } = req.body;
+        const { name, brand, description, price, original_price, image_url, category, skin_types, concerns, purchase_url, ingredients } = req.body;
 
         if (!name) {
             return res.status(400).json({ error: 'Product name is required' });
+        }
+
+        // MANDATORY: Ingredients field is required to prevent safety check bypass
+        if (!ingredients || ingredients.trim().length < 3) {
+            return res.status(400).json({
+                error: 'Ingredients field is required',
+                code: 'INGREDIENTS_REQUIRED',
+                message: 'Please provide the product ingredients list. This is mandatory for safety verification.'
+            });
+        }
+
+        // Phase 1: Immediate ingredient safety check
+        const safetyCheck = await immediateCheck(ingredients, name, description);
+
+        if (!safetyCheck.safe) {
+            console.log(`[seller] Product rejected for ${req.user.email}: ${safetyCheck.message}`);
+
+            // Apply penalty to seller
+            const penaltyResult = await applyPenalty(
+                req.user.id,
+                null, // No product ID yet
+                name,
+                safetyCheck.flaggedIngredients,
+                'toxic_ingredient'
+            );
+
+            return res.status(400).json({
+                error: 'Product rejected due to harmful ingredients',
+                code: 'TOXIC_INGREDIENTS_DETECTED',
+                flaggedIngredients: safetyCheck.flaggedIngredients,
+                severity: safetyCheck.severity,
+                penalty: {
+                    action: penaltyResult.action,
+                    message: penaltyResult.message,
+                    violationCount: penaltyResult.violation?.newViolationCount
+                }
+            });
         }
 
         const id = uuidv4();
@@ -64,11 +123,11 @@ router.post('/products', requireSeller, async (req, res) => {
         const concernsJson = concerns ? JSON.stringify(concerns) : null;
 
         await sql`
-      INSERT INTO seller_products (id, seller_id, name, brand, description, price, original_price, image_url, category, skin_types, concerns, purchase_url)
-      VALUES (${id}, ${req.user.id}, ${name}, ${brand || null}, ${description || null}, ${price || null}, ${original_price || null}, ${image_url || null}, ${category || null}, ${skinTypesJson}, ${concernsJson}, ${purchase_url || null})
+      INSERT INTO seller_products (id, seller_id, name, brand, description, price, original_price, image_url, category, skin_types, concerns, purchase_url, ingredients)
+      VALUES (${id}, ${req.user.id}, ${name}, ${brand || null}, ${description || null}, ${price || null}, ${original_price || null}, ${image_url || null}, ${category || null}, ${skinTypesJson}, ${concernsJson}, ${purchase_url || null}, ${ingredients || null})
     `;
 
-        res.json({ data: { id, message: 'Product created successfully' } });
+        res.json({ data: { id, message: 'Product created successfully', safetyCheck: 'passed' } });
     } catch (err) {
         console.error('[seller] Error creating product:', err);
         res.status(500).json({ error: 'Failed to create product' });
@@ -203,4 +262,52 @@ router.get('/profile', requireSeller, async (req, res) => {
     }
 });
 
+// Get seller account status (violations, warnings, probation)
+router.get('/account-status', requireSeller, async (req, res) => {
+    try {
+        const status = await getAccountStatus(req.user.id);
+        if (!status) {
+            return res.status(404).json({ error: 'Account not found' });
+        }
+        res.json({ data: status });
+    } catch (err) {
+        console.error('[seller] Error fetching account status:', err);
+        res.status(500).json({ error: 'Failed to fetch account status' });
+    }
+});
+
+// Get seller's violation history
+router.get('/violations', requireSeller, async (req, res) => {
+    try {
+        const violations = await getViolationHistory(req.user.id);
+        res.json({ data: violations });
+    } catch (err) {
+        console.error('[seller] Error fetching violations:', err);
+        res.status(500).json({ error: 'Failed to fetch violations' });
+    }
+});
+
+// Submit an appeal for a violation
+router.post('/appeals', requireSeller, async (req, res) => {
+    try {
+        const { violationId, reason } = req.body;
+
+        if (!violationId || !reason) {
+            return res.status(400).json({ error: 'Violation ID and reason are required' });
+        }
+
+        const result = await submitAppeal(req.user.id, violationId, reason);
+
+        if (!result.success) {
+            return res.status(400).json({ error: result.message });
+        }
+
+        res.json({ data: result });
+    } catch (err) {
+        console.error('[seller] Error submitting appeal:', err);
+        res.status(500).json({ error: 'Failed to submit appeal' });
+    }
+});
+
 module.exports = router;
+
