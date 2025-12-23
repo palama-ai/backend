@@ -17,7 +17,14 @@ const requireSeller = async (req, res, next) => {
         }
 
         const token = authHeader.split(' ')[1];
-        const decoded = jwt.verify(token, JWT_SECRET);
+
+        let decoded;
+        try {
+            decoded = jwt.verify(token, JWT_SECRET);
+        } catch (jwtErr) {
+            console.error('[seller] JWT verification failed:', jwtErr.message);
+            return res.status(401).json({ error: 'Invalid token' });
+        }
 
         // Check if user exists and is a seller
         const users = await sql`SELECT id, email, role, account_status, violation_count, is_under_probation FROM users WHERE id = ${decoded.id}`;
@@ -53,7 +60,8 @@ const requireSeller = async (req, res, next) => {
         req.user = user;
         next();
     } catch (err) {
-        return res.status(401).json({ error: 'Invalid token' });
+        console.error('[seller] requireSeller error:', err);
+        return res.status(500).json({ error: 'Server error during authentication', details: err.message });
     }
 };
 
