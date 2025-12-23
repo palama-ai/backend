@@ -390,6 +390,149 @@ async function init() {
 
     await sqlClient`CREATE INDEX IF NOT EXISTS idx_comment_likes_comment_id ON comment_likes(comment_id)`;
 
+    // ============================================
+    // PRODUCT SAFETY & SELLER PENALTY SYSTEM
+    // ============================================
+
+    // Migration: Add seller violation tracking columns to users table
+    try {
+      await sqlClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS violation_count INTEGER DEFAULT 0`;
+      await sqlClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS account_status VARCHAR(20) DEFAULT 'ACTIVE'`;
+      await sqlClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_under_probation INTEGER DEFAULT 0`;
+      await sqlClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS probation_started_at TIMESTAMP`;
+      await sqlClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_violation_at TIMESTAMP`;
+      console.log('[db] Added/verified seller violation columns in users table');
+    } catch (e) {
+      console.log('[db] Seller violation columns migration skipped:', e.message?.substring(0, 50));
+    }
+
+    // Toxic ingredients blacklist table
+    await sqlClient`
+      CREATE TABLE IF NOT EXISTS toxic_ingredients (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name VARCHAR(255) NOT NULL,
+        aliases TEXT,
+        severity VARCHAR(20) DEFAULT 'medium',
+        reason TEXT,
+        source VARCHAR(100),
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `;
+    console.log('[db] Created/verified toxic_ingredients table');
+
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_toxic_ingredients_name ON toxic_ingredients(name)`;
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_toxic_ingredients_severity ON toxic_ingredients(severity)`;
+
+    // Rejected products table (for AI training)
+    await sqlClient`
+      CREATE TABLE IF NOT EXISTS rejected_products (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        seller_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        original_product_data TEXT,
+        detected_ingredients TEXT,
+        rejection_reason TEXT,
+        rejection_phase VARCHAR(20),
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `;
+    console.log('[db] Created/verified rejected_products table');
+
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_rejected_products_seller_id ON rejected_products(seller_id)`;
+
+    // Seller blacklist table (for ban evasion prevention)
+    await sqlClient`
+      CREATE TABLE IF NOT EXISTS seller_blacklist (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        email VARCHAR(255),
+        email_hash VARCHAR(255),
+        identity_hash VARCHAR(255),
+        phone VARCHAR(50),
+        device_fingerprint VARCHAR(255),
+        ban_reason TEXT,
+        original_user_id UUID,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `;
+    console.log('[db] Created/verified seller_blacklist table');
+
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_seller_blacklist_email ON seller_blacklist(email)`;
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_seller_blacklist_email_hash ON seller_blacklist(email_hash)`;
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_seller_blacklist_identity_hash ON seller_blacklist(identity_hash)`;
+
+    // Seller violations log table
+    await sqlClient`
+      CREATE TABLE IF NOT EXISTS seller_violations (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        seller_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        product_id UUID,
+        product_name VARCHAR(255),
+        violation_type VARCHAR(50),
+        detected_ingredients TEXT,
+        penalty_applied VARCHAR(20),
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `;
+    console.log('[db] Created/verified seller_violations table');
+
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_seller_violations_seller_id ON seller_violations(seller_id)`;
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_seller_violations_created_at ON seller_violations(created_at)`;
+
+    // Seller appeals table
+    await sqlClient`
+      CREATE TABLE IF NOT EXISTS seller_appeals (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        seller_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        violation_id UUID REFERENCES seller_violations(id) ON DELETE CASCADE,
+        reason TEXT,
+        status VARCHAR(20) DEFAULT 'pending',
+        reviewed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        reviewed_at TIMESTAMP,
+        admin_notes TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `;
+    console.log('[db] Created/verified seller_appeals table');
+
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_seller_appeals_seller_id ON seller_appeals(seller_id)`;
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_seller_appeals_status ON seller_appeals(status)`;
+
+    // Add ingredients column to seller_products if not exists
+    try {
+      await sqlClient`ALTER TABLE seller_products ADD COLUMN IF NOT EXISTS ingredients TEXT`;
+      console.log('[db] Added/verified ingredients column in seller_products');
+    } catch (e) {
+      console.log('[db] Ingredients column migration skipped:', e.message?.substring(0, 50));
+    }
+
+    // Seed initial toxic ingredients if table is empty
+    try {
+      const toxicCount = await sqlClient`SELECT COUNT(*) as count FROM toxic_ingredients`;
+      if (parseInt(toxicCount[0]?.count || 0) === 0) {
+        const toxicIngredients = [
+          { name: 'mercury', severity: 'critical', reason: 'Heavy metal poisoning, neurological damage', source: 'FDA' },
+          { name: 'lead', severity: 'critical', reason: 'Heavy metal toxicity, developmental issues', source: 'FDA' },
+          { name: 'arsenic', severity: 'critical', reason: 'Carcinogenic, toxic', source: 'WHO' },
+          { name: 'formaldehyde', severity: 'high', reason: 'Carcinogenic, skin irritant', source: 'EU' },
+          { name: 'hydroquinone', severity: 'high', reason: 'Banned in many countries, skin damage', source: 'EU' },
+          { name: 'triclosan', severity: 'medium', reason: 'Hormone disruption, environmental concern', source: 'FDA' },
+          { name: 'coal tar', severity: 'high', reason: 'Carcinogenic', source: 'FDA' },
+          { name: 'toluene', severity: 'high', reason: 'Neurological damage, reproductive toxicity', source: 'EU' },
+          { name: 'parabens', severity: 'medium', reason: 'Potential hormone disruption', source: 'EU' },
+          { name: 'phthalates', severity: 'medium', reason: 'Endocrine disruption', source: 'EU' }
+        ];
+
+        for (const ing of toxicIngredients) {
+          await sqlClient`
+            INSERT INTO toxic_ingredients (name, severity, reason, source)
+            VALUES (${ing.name}, ${ing.severity}, ${ing.reason}, ${ing.source})
+          `;
+        }
+        console.log('[db] Seeded initial toxic ingredients list');
+      }
+    } catch (e) {
+      console.log('[db] Toxic ingredients seeding skipped:', e.message?.substring(0, 50));
+    }
+
 
     // Seed admin user if not exists (dev-friendly)
     try {
