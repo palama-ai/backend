@@ -38,6 +38,7 @@ const notificationsRoutes = require('./routes/notifications');
 const sellerRoutes = require('./routes/seller');
 const productsRoutes = require('./routes/products');
 const uploadRoutes = require('./routes/upload');
+const violationsRoutes = require('./routes/violations');
 
 // 🛡️ SECURITY: Import defense system middleware
 const { securityMiddleware, getSecurityStats, getSecurityLogs } = require('./middleware/security');
@@ -252,6 +253,7 @@ app.use('/api/notifications', notificationsRoutes);
 app.use('/api/seller', sellerRoutes);
 app.use('/api/products', productsRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/api/admin/violations', violationsRoutes);
 
 // Basic API root - helpful for health checks and to avoid "Cannot GET /api" responses
 app.get('/api', (req, res) => {
