@@ -10,6 +10,7 @@ const jwt = require('jsonwebtoken');
 const { sql } = require('../db');
 const { unlockAccount, reviewAppeal, isBlacklisted } = require('../lib/penaltyService');
 const { getToxicIngredients, addToxicIngredient } = require('../lib/ingredientScanner');
+const { seedToxicIngredients, deepScanWithAI, TOXIC_INGREDIENTS_DATABASE } = require('../lib/safetyAgent');
 
 const JWT_SECRET = process.env.GLOWMATCH_JWT_SECRET || 'dev_secret_change_me';
 
@@ -251,6 +252,65 @@ router.get('/rejected-products', requireAdmin, async (req, res) => {
     } catch (err) {
         console.error('[violations] Error fetching rejected products:', err);
         res.status(500).json({ error: 'Failed to fetch rejected products' });
+    }
+});
+
+// Seed comprehensive toxic ingredients database
+router.post('/seed-toxic-ingredients', requireAdmin, async (req, res) => {
+    try {
+        console.log('[violations] Admin triggered toxic ingredients seeding');
+        const result = await seedToxicIngredients(sql);
+
+        res.json({
+            success: true,
+            message: `Seeded ${result.added} new toxic ingredients (${result.skipped} already existed)`,
+            data: result
+        });
+    } catch (err) {
+        console.error('[violations] Error seeding toxic ingredients:', err);
+        res.status(500).json({ error: 'Failed to seed toxic ingredients' });
+    }
+});
+
+// Get toxic ingredients database stats
+router.get('/toxic-ingredients/stats', requireAdmin, async (req, res) => {
+    try {
+        const dbCount = await sql`SELECT COUNT(*) as count FROM toxic_ingredients`;
+        const bySeverity = await sql`
+            SELECT severity, COUNT(*) as count 
+            FROM toxic_ingredients 
+            GROUP BY severity 
+            ORDER BY severity
+        `;
+
+        res.json({
+            data: {
+                totalInDatabase: parseInt(dbCount[0]?.count || 0),
+                availableToSeed: TOXIC_INGREDIENTS_DATABASE.length,
+                bySeverity: bySeverity
+            }
+        });
+    } catch (err) {
+        console.error('[violations] Error fetching stats:', err);
+        res.status(500).json({ error: 'Failed to fetch stats' });
+    }
+});
+
+// Deep scan a product with AI
+router.post('/products/:id/deep-scan', requireAdmin, async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const result = await deepScanWithAI(id, sql);
+
+        if (result.error) {
+            return res.status(400).json({ error: result.error });
+        }
+
+        res.json({ data: result });
+    } catch (err) {
+        console.error('[violations] Error running deep scan:', err);
+        res.status(500).json({ error: 'Failed to run deep scan' });
     }
 });
 
