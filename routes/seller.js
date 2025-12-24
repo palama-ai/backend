@@ -8,6 +8,42 @@ const { applyPenalty, getAccountStatus, getViolationHistory, submitAppeal } = re
 
 const JWT_SECRET = process.env.GLOWMATCH_JWT_SECRET || 'dev_secret_change_me';
 
+// Middleware to authenticate seller (basic - for terms acceptance)
+const requireSellerBasic = async (req, res, next) => {
+    try {
+        const authHeader = req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return res.status(401).json({ error: 'No token provided' });
+        }
+
+        const token = authHeader.split(' ')[1];
+
+        let decoded;
+        try {
+            decoded = jwt.verify(token, JWT_SECRET);
+        } catch (jwtErr) {
+            console.error('[seller] JWT verification failed:', jwtErr.message);
+            return res.status(401).json({ error: 'Invalid token' });
+        }
+
+        const users = await sql`SELECT id, email, role, terms_accepted, terms_accepted_at FROM users WHERE id = ${decoded.id}`;
+        if (!users || users.length === 0) {
+            return res.status(401).json({ error: 'User not found' });
+        }
+
+        const user = users[0];
+        if (user.role !== 'seller' && user.role !== 'admin') {
+            return res.status(403).json({ error: 'Seller access required' });
+        }
+
+        req.user = user;
+        next();
+    } catch (err) {
+        console.error('[seller] requireSellerBasic error:', err);
+        return res.status(500).json({ error: 'Server error during authentication' });
+    }
+};
+
 // Middleware to authenticate seller and check account status
 const requireSeller = async (req, res, next) => {
     try {
@@ -27,7 +63,7 @@ const requireSeller = async (req, res, next) => {
         }
 
         // Check if user exists and is a seller
-        const users = await sql`SELECT id, email, role, account_status, violation_count, is_under_probation FROM users WHERE id = ${decoded.id}`;
+        const users = await sql`SELECT id, email, role, account_status, violation_count, is_under_probation, terms_accepted FROM users WHERE id = ${decoded.id}`;
         if (!users || users.length === 0) {
             return res.status(401).json({ error: 'User not found' });
         }
@@ -64,6 +100,51 @@ const requireSeller = async (req, res, next) => {
         return res.status(500).json({ error: 'Server error during authentication', details: err.message });
     }
 };
+
+// Check if seller has accepted terms
+router.get('/terms-status', requireSellerBasic, async (req, res) => {
+    try {
+        res.json({
+            data: {
+                termsAccepted: req.user.terms_accepted === true || req.user.terms_accepted === 1,
+                acceptedAt: req.user.terms_accepted_at
+            }
+        });
+    } catch (err) {
+        console.error('[seller] Error checking terms status:', err);
+        res.status(500).json({ error: 'Failed to check terms status' });
+    }
+});
+
+// Accept terms of service
+router.post('/accept-terms', requireSellerBasic, async (req, res) => {
+    try {
+        const { signatureData } = req.body;
+
+        if (!signatureData) {
+            return res.status(400).json({ error: 'Signature is required' });
+        }
+
+        // Update user with terms acceptance
+        await sql`
+            UPDATE users 
+            SET terms_accepted = true,
+                terms_accepted_at = NOW(),
+                terms_signature = ${signatureData}
+            WHERE id = ${req.user.id}
+        `;
+
+        console.log(`[seller] Terms accepted by ${req.user.email}`);
+
+        res.json({
+            success: true,
+            message: 'Terms of service accepted successfully'
+        });
+    } catch (err) {
+        console.error('[seller] Error accepting terms:', err);
+        res.status(500).json({ error: 'Failed to accept terms' });
+    }
+});
 
 // Get seller's products
 router.get('/products', requireSeller, async (req, res) => {
