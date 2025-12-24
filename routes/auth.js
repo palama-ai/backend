@@ -526,12 +526,15 @@ router.post('/google', async (req, res) => {
     try {
       const response = await fetch(googleVerifyUrl);
       if (!response.ok) {
+        const errorText = await response.text();
+        console.error('[auth/google] Google API error:', response.status, errorText);
         throw new Error('Invalid Google token');
       }
       googleUser = await response.json();
+      console.log('[auth/google] Google user verified:', googleUser.email);
     } catch (e) {
       console.error('[auth/google] Token verification failed:', e.message);
-      return res.status(401).json({ error: 'Invalid Google token' });
+      return res.status(401).json({ error: 'Invalid Google token', details: e.message });
     }
 
     const { email, name, picture, sub: googleId } = googleUser;
@@ -546,6 +549,7 @@ router.post('/google', async (req, res) => {
     if (existingUsers && existingUsers.length > 0) {
       // User exists - log them in
       const user = existingUsers[0];
+      console.log('[auth/google] Existing user logging in:', email, 'role:', user.role);
 
       // Check if user is deleted or disabled
       if (user.deleted) {
@@ -565,12 +569,15 @@ router.post('/google', async (req, res) => {
       if (!user.google_id) {
         try {
           await sql`UPDATE users SET google_id = ${googleId}, avatar_url = ${picture || user.avatar_url} WHERE id = ${user.id}`;
+          console.log('[auth/google] Updated google_id for existing user');
         } catch (e) {
           console.warn('[auth/google] Failed to update google_id:', e.message);
         }
       }
 
       const token = signToken({ id: user.id, email: user.email, role: user.role });
+      console.log('[auth/google] Login successful for:', email);
+
       return res.json({
         data: {
           user: {
@@ -578,7 +585,8 @@ router.post('/google', async (req, res) => {
             email: user.email,
             full_name: user.full_name,
             role: user.role,
-            avatar_url: user.avatar_url || picture
+            avatar_url: user.avatar_url || picture,
+            referral_code: user.referral_code
           },
           token,
           isNewUser: false
@@ -587,33 +595,100 @@ router.post('/google', async (req, res) => {
     }
 
     // User doesn't exist - create new account
+    console.log('[auth/google] Creating new user:', email, 'accountType:', accountType);
+
+    // Check if signup is blocked
     const role = accountType === 'seller' ? 'seller' : 'user';
+    try {
+      const blockKey = role === 'seller' ? 'block_seller_signup' : 'block_user_signup';
+      const blockRow = await sql`SELECT value FROM site_settings WHERE key = ${blockKey}`;
+      if (blockRow && blockRow.length > 0 && blockRow[0].value === 'true') {
+        return res.status(403).json({
+          error: 'Signup blocked',
+          message: role === 'seller' ? 'Seller registration is temporarily disabled.' : 'User registration is temporarily disabled.'
+        });
+      }
+    } catch (e) {
+      // Table might not exist
+    }
+
     const id = uuidv4();
     const myReferralCode = uuidv4().slice(0, 8).toUpperCase();
+    const fullName = name || email.split('@')[0];
 
     // Create user without password (Google-only account)
-    await sql`
-      INSERT INTO users (id, email, password_hash, full_name, role, referral_code, google_id, avatar_url, created_at, updated_at)
-      VALUES (${id}, ${email}, '', ${name || email.split('@')[0]}, ${role}, ${myReferralCode}, ${googleId}, ${picture || null}, NOW(), NOW())
-    `;
+    try {
+      await sql`
+        INSERT INTO users (id, email, password_hash, full_name, role, referral_code, google_id, avatar_url, created_at, updated_at)
+        VALUES (${id}, ${email}, '', ${fullName}, ${role}, ${myReferralCode}, ${googleId}, ${picture || null}, NOW(), NOW())
+      `;
+      console.log('[auth/google] User created:', id);
+    } catch (e) {
+      console.error('[auth/google] Failed to create user:', e.message);
+      // Check if it's a duplicate - race condition
+      if (e.message?.includes('duplicate') || e.message?.includes('unique')) {
+        const existing = await sql`SELECT * FROM users WHERE email = ${email}`;
+        if (existing && existing.length > 0) {
+          const user = existing[0];
+          const token = signToken({ id: user.id, email: user.email, role: user.role });
+          return res.json({
+            data: {
+              user: { id: user.id, email: user.email, full_name: user.full_name, role: user.role },
+              token,
+              isNewUser: false
+            }
+          });
+        }
+      }
+      throw e;
+    }
+
+    // Create user_profiles mirror (IMPORTANT - was missing!)
+    try {
+      await sql`
+        INSERT INTO user_profiles (id, email, full_name, role, referral_code, avatar_url)
+        VALUES (${id}, ${email}, ${fullName}, ${role}, ${myReferralCode}, ${picture || null})
+      `;
+      console.log('[auth/google] User profile created');
+    } catch (e) {
+      console.warn('[auth/google] Failed to create user_profiles (may not exist):', e.message);
+    }
+
+    // Create referral_codes entry
+    try {
+      await sql`
+        INSERT INTO referral_codes (id, code, owner_id, uses_count, created_at)
+        VALUES (${uuidv4()}, ${myReferralCode}, ${id}, 0, NOW())
+      `;
+    } catch (e) {
+      console.warn('[auth/google] Failed to create referral_codes:', e.message);
+    }
 
     // Create subscription for new user
     const subId = uuidv4();
     const now = new Date().toISOString();
     const far = new Date();
-    far.setFullYear(far.getFullYear() + 100);
-    await sql`
-      INSERT INTO user_subscriptions (id, user_id, status, plan_id, current_period_start, current_period_end, quiz_attempts_used, quiz_attempts_limit, updated_at)
-      VALUES (${subId}, ${id}, 'active', null, ${now}, ${far.toISOString()}, 0, 2, ${now})
-    `;
+    far.setFullYear(far.getFullYear() + 1);
+
+    try {
+      await sql`
+        INSERT INTO user_subscriptions (id, user_id, status, plan_id, current_period_start, current_period_end, quiz_attempts_used, quiz_attempts_limit, updated_at)
+        VALUES (${subId}, ${id}, 'active', null, ${now}, ${far.toISOString()}, 0, 5, ${now})
+      `;
+      console.log('[auth/google] Subscription created');
+    } catch (e) {
+      console.warn('[auth/google] Failed to create subscription:', e.message);
+    }
 
     const token = signToken({ id, email, role });
+    console.log('[auth/google] New user signup successful:', email, 'role:', role);
+
     res.json({
       data: {
         user: {
           id,
           email,
-          full_name: name || email.split('@')[0],
+          full_name: fullName,
           role,
           referral_code: myReferralCode,
           avatar_url: picture
@@ -624,8 +699,8 @@ router.post('/google', async (req, res) => {
     });
 
   } catch (err) {
-    console.error('[auth/google] Error:', err);
-    res.status(500).json({ error: 'Google authentication failed' });
+    console.error('[auth/google] Error:', err.stack || err);
+    res.status(500).json({ error: 'Google authentication failed', details: err.message });
   }
 });
 
