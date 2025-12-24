@@ -101,6 +101,7 @@ router.post('/products', requireSeller, async (req, res) => {
         // Phase 1: Immediate ingredient safety check
         const safetyCheck = await immediateCheck(ingredients, name, description);
 
+        // Only block on critical/high severity (not medium - those are just warnings)
         if (!safetyCheck.safe) {
             console.log(`[seller] Product rejected for ${req.user.email}: ${safetyCheck.message}`);
 
@@ -135,7 +136,26 @@ router.post('/products', requireSeller, async (req, res) => {
       VALUES (${id}, ${req.user.id}, ${name}, ${brand || null}, ${description || null}, ${price || null}, ${original_price || null}, ${image_url || null}, ${category || null}, ${skinTypesJson}, ${concernsJson}, ${purchase_url || null}, ${ingredients || null})
     `;
 
-        res.json({ data: { id, message: 'Product created successfully', safetyCheck: 'passed' } });
+        // Return success with any warnings (medium-severity ingredients)
+        const response = {
+            data: {
+                id,
+                message: 'Product created successfully',
+                safetyCheck: 'passed'
+            }
+        };
+
+        // Include warnings if any (these don't block but inform the seller)
+        if (safetyCheck.warnings && safetyCheck.warnings.length > 0) {
+            response.warnings = safetyCheck.warnings.map(w => ({
+                ingredient: w.name,
+                reason: w.reason,
+                severity: 'warning'
+            }));
+            response.data.message = `Product created with ${safetyCheck.warnings.length} warning(s)`;
+        }
+
+        res.json(response);
     } catch (err) {
         console.error('[seller] Error creating product:', err);
         res.status(500).json({ error: 'Failed to create product' });
