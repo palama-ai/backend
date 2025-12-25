@@ -4,7 +4,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const { sql } = require('../db');
-const { sendPasswordResetCode } = require('../utils/email');
+const { sendPasswordResetCode, sendVerificationCode } = require('../utils/email');
 
 const JWT_SECRET = process.env.GLOWMATCH_JWT_SECRET || 'dev_secret_change_me';
 const TOKEN_EXPIRY = '7d'; // SECURITY: Reduced from 30d to 7d
@@ -85,10 +85,14 @@ router.post('/signup', async (req, res) => {
       referrer = result && result.length > 0 ? result[0] : null;
     }
 
-    // Insert new user with the specified role
+    // Generate email verification code
+    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const verificationExpires = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 minutes
+
+    // Insert new user with the specified role (email_verified = 0 by default)
     await sql`
-      INSERT INTO users (id, email, password_hash, full_name, role, referral_code, referrer_id)
-      VALUES (${id}, ${email}, ${password_hash}, ${fullName || null}, ${role}, ${myReferralCode}, ${referrer ? referrer.id : null})
+      INSERT INTO users (id, email, password_hash, full_name, role, referral_code, referrer_id, email_verified, verification_code, verification_code_expires)
+      VALUES (${id}, ${email}, ${password_hash}, ${fullName || null}, ${role}, ${myReferralCode}, ${referrer ? referrer.id : null}, 0, ${verificationCode}, ${verificationExpires})
     `;
 
     // create profile mirror
@@ -192,8 +196,22 @@ router.post('/signup', async (req, res) => {
       }
     }
 
-    const token = signToken({ id, email, role: 'user' });
-    res.json({ data: { user: { id, email, full_name: fullName, role: 'user', referral_code: myReferralCode }, token } });
+    // Send verification email
+    const emailResult = await sendVerificationCode(email, verificationCode, fullName);
+    if (emailResult.success) {
+      console.log(`[auth] Verification code sent to ${email}`);
+    } else {
+      console.log(`[auth] Verification code for ${email}: ${verificationCode} (email not sent: ${emailResult.reason})`);
+    }
+
+    // Return success but require verification (no token until verified)
+    res.json({
+      data: {
+        user: { id, email, full_name: fullName, role, referral_code: myReferralCode, email_verified: false },
+        requiresVerification: true,
+        message: 'Account created! Please check your email for the verification code.'
+      }
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to create user' });
@@ -244,6 +262,34 @@ router.post('/login', async (req, res) => {
     // Successful login - clear failed attempts
     if (req.security) req.security.clearLoginAttempts(email);
 
+    // Check if email is verified
+    if (!user.email_verified) {
+      // Generate new verification code if expired or doesn't exist
+      let currentCode = user.verification_code;
+      const codeExpired = !user.verification_code_expires || new Date(user.verification_code_expires) < new Date();
+
+      if (codeExpired) {
+        currentCode = Math.floor(100000 + Math.random() * 900000).toString();
+        const newExpires = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+        await sql`UPDATE users SET verification_code = ${currentCode}, verification_code_expires = ${newExpires} WHERE id = ${user.id}`;
+
+        // Send new verification email
+        const emailResult = await sendVerificationCode(email, currentCode, user.full_name);
+        if (emailResult.success) {
+          console.log(`[auth] New verification code sent to ${email}`);
+        } else {
+          console.log(`[auth] Verification code for ${email}: ${currentCode} (email not sent: ${emailResult.reason})`);
+        }
+      }
+
+      return res.status(403).json({
+        error: 'Email not verified',
+        requiresVerification: true,
+        email: user.email,
+        message: 'Please verify your email before logging in. Check your inbox for a verification code.'
+      });
+    }
+
     const token = signToken({ id: user.id, email: user.email, role: user.role });
 
     // If user is disabled, block login and return explanatory message
@@ -252,7 +298,7 @@ router.post('/login', async (req, res) => {
       return res.status(403).json({ error: 'Account disabled', message: msg });
     }
 
-    res.json({ data: { user: { id: user.id, email: user.email, full_name: user.full_name, role: user.role, referral_code: user.referral_code }, token } });
+    res.json({ data: { user: { id: user.id, email: user.email, full_name: user.full_name, role: user.role, referral_code: user.referral_code, email_verified: true }, token } });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to login' });
@@ -400,6 +446,139 @@ router.post('/reset-password', async (req, res) => {
   } catch (err) {
     console.error('[auth] reset-password error:', err);
     res.status(500).json({ error: 'Failed to reset password' });
+  }
+});
+
+// ==================== EMAIL VERIFICATION ====================
+// POST /api/auth/verify-email - Verify email with code
+router.post('/verify-email', async (req, res) => {
+  try {
+    const { email, code } = req.body;
+
+    if (!email || !code) {
+      return res.status(400).json({ error: 'Email and verification code are required' });
+    }
+
+    // Find user with matching email
+    const userResult = await sql`
+      SELECT id, email, role, full_name, referral_code, verification_code, verification_code_expires, email_verified
+      FROM users 
+      WHERE email = ${email}
+    `;
+
+    if (!userResult || userResult.length === 0) {
+      return res.status(400).json({ error: 'User not found' });
+    }
+
+    const user = userResult[0];
+
+    // Already verified
+    if (user.email_verified) {
+      const token = signToken({ id: user.id, email: user.email, role: user.role });
+      return res.json({
+        success: true,
+        message: 'Email already verified',
+        data: {
+          user: { id: user.id, email: user.email, full_name: user.full_name, role: user.role, referral_code: user.referral_code, email_verified: true },
+          token
+        }
+      });
+    }
+
+    // Check if code matches
+    if (user.verification_code !== code) {
+      return res.status(400).json({ error: 'Invalid verification code' });
+    }
+
+    // Check if code is expired
+    if (user.verification_code_expires && new Date(user.verification_code_expires) < new Date()) {
+      return res.status(400).json({ error: 'Verification code has expired. Please request a new one.' });
+    }
+
+    // Mark email as verified and clear verification code
+    await sql`
+      UPDATE users 
+      SET email_verified = 1, verification_code = NULL, verification_code_expires = NULL
+      WHERE id = ${user.id}
+    `;
+
+    console.log(`[auth] Email verified for ${email}`);
+
+    // Issue JWT token
+    const token = signToken({ id: user.id, email: user.email, role: user.role });
+
+    res.json({
+      success: true,
+      message: 'Email verified successfully!',
+      data: {
+        user: { id: user.id, email: user.email, full_name: user.full_name, role: user.role, referral_code: user.referral_code, email_verified: true },
+        token
+      }
+    });
+
+  } catch (err) {
+    console.error('[auth] verify-email error:', err);
+    res.status(500).json({ error: 'Failed to verify email' });
+  }
+});
+
+// POST /api/auth/resend-verification - Resend verification code
+router.post('/resend-verification', async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    // Find user
+    const userResult = await sql`
+      SELECT id, email, full_name, email_verified
+      FROM users 
+      WHERE email = ${email}
+    `;
+
+    if (!userResult || userResult.length === 0) {
+      // Don't reveal if user exists
+      return res.json({ success: true, message: 'If an account exists with this email, a new verification code has been sent.' });
+    }
+
+    const user = userResult[0];
+
+    // Already verified
+    if (user.email_verified) {
+      return res.json({ success: true, message: 'Email is already verified. You can login now.' });
+    }
+
+    // Generate new verification code
+    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const verificationExpires = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+
+    // Update in database
+    await sql`
+      UPDATE users 
+      SET verification_code = ${verificationCode}, verification_code_expires = ${verificationExpires}
+      WHERE id = ${user.id}
+    `;
+
+    // Send verification email
+    const emailResult = await sendVerificationCode(email, verificationCode, user.full_name);
+
+    if (emailResult.success) {
+      console.log(`[auth] Verification code resent to ${email}`);
+    } else {
+      console.log(`[auth] Verification code for ${email}: ${verificationCode} (email not sent: ${emailResult.reason})`);
+    }
+
+    res.json({
+      success: true,
+      message: 'A new verification code has been sent to your email.',
+      expiresIn: '15 minutes'
+    });
+
+  } catch (err) {
+    console.error('[auth] resend-verification error:', err);
+    res.status(500).json({ error: 'Failed to resend verification code' });
   }
 });
 
@@ -575,6 +754,33 @@ router.post('/google', async (req, res) => {
         }
       }
 
+      // Check if email is verified
+      if (!user.email_verified) {
+        // Generate new verification code if needed
+        let currentCode = user.verification_code;
+        const codeExpired = !user.verification_code_expires || new Date(user.verification_code_expires) < new Date();
+
+        if (codeExpired) {
+          currentCode = Math.floor(100000 + Math.random() * 900000).toString();
+          const newExpires = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+          await sql`UPDATE users SET verification_code = ${currentCode}, verification_code_expires = ${newExpires} WHERE id = ${user.id}`;
+
+          const emailResult = await sendVerificationCode(email, currentCode, user.full_name);
+          if (emailResult.success) {
+            console.log(`[auth/google] Verification code sent to ${email}`);
+          } else {
+            console.log(`[auth/google] Verification code for ${email}: ${currentCode}`);
+          }
+        }
+
+        return res.status(403).json({
+          error: 'Email not verified',
+          requiresVerification: true,
+          email: user.email,
+          message: 'Please verify your email before logging in.'
+        });
+      }
+
       const token = signToken({ id: user.id, email: user.email, role: user.role });
       console.log('[auth/google] Login successful for:', email);
 
@@ -586,7 +792,8 @@ router.post('/google', async (req, res) => {
             full_name: user.full_name,
             role: user.role,
             avatar_url: user.avatar_url || picture,
-            referral_code: user.referral_code
+            referral_code: user.referral_code,
+            email_verified: true
           },
           token,
           isNewUser: false
@@ -616,11 +823,15 @@ router.post('/google', async (req, res) => {
     const myReferralCode = uuidv4().slice(0, 8).toUpperCase();
     const fullName = name || email.split('@')[0];
 
-    // Create user without password (Google-only account)
+    // Generate verification code for new user
+    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const verificationExpires = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+
+    // Create user without password (Google-only account) with email_verified = 0
     try {
       await sql`
-        INSERT INTO users (id, email, password_hash, full_name, role, referral_code, google_id, avatar_url, created_at, updated_at)
-        VALUES (${id}, ${email}, '', ${fullName}, ${role}, ${myReferralCode}, ${googleId}, ${picture || null}, NOW(), NOW())
+        INSERT INTO users (id, email, password_hash, full_name, role, referral_code, google_id, avatar_url, email_verified, verification_code, verification_code_expires, created_at, updated_at)
+        VALUES (${id}, ${email}, '', ${fullName}, ${role}, ${myReferralCode}, ${googleId}, ${picture || null}, 0, ${verificationCode}, ${verificationExpires}, NOW(), NOW())
       `;
       console.log('[auth/google] User created:', id);
     } catch (e) {
@@ -680,9 +891,17 @@ router.post('/google', async (req, res) => {
       console.warn('[auth/google] Failed to create subscription:', e.message);
     }
 
-    const token = signToken({ id, email, role });
-    console.log('[auth/google] New user signup successful:', email, 'role:', role);
+    // Send verification email
+    const emailResult = await sendVerificationCode(email, verificationCode, fullName);
+    if (emailResult.success) {
+      console.log(`[auth/google] Verification code sent to ${email}`);
+    } else {
+      console.log(`[auth/google] Verification code for ${email}: ${verificationCode} (email not sent: ${emailResult.reason})`);
+    }
 
+    console.log('[auth/google] New user signup - requires verification:', email, 'role:', role);
+
+    // Return success but require verification (no token until verified)
     res.json({
       data: {
         user: {
@@ -691,10 +910,12 @@ router.post('/google', async (req, res) => {
           full_name: fullName,
           role,
           referral_code: myReferralCode,
-          avatar_url: picture
+          avatar_url: picture,
+          email_verified: false
         },
-        token,
-        isNewUser: true
+        requiresVerification: true,
+        isNewUser: true,
+        message: 'Account created! Please check your email for the verification code.'
       }
     });
 
