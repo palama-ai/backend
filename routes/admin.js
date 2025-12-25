@@ -855,6 +855,15 @@ router.post('/blogs', requireAdmin, async (req, res) => {
     res.json({ data: blog });
   } catch (e) {
     console.error('[backend/admin] POST /blogs error:', e);
+
+    // Check for duplicate slug error
+    if (e.code === '23505' && e.constraint === 'blogs_slug_key') {
+      return res.status(400).json({
+        error: 'A blog with this slug already exists. Please use a different slug or edit the existing blog.',
+        field: 'slug'
+      });
+    }
+
     res.status(500).json({ error: 'Failed to create blog' });
   }
 });
