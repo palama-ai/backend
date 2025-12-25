@@ -117,13 +117,30 @@ router.post('/fix-url-columns', async (req, res) => {
     if (!admin) return res.status(403).json({ error: 'Admin access required' });
 
     console.log('[admin] Running URL columns fix...');
-    await sql`ALTER TABLE seller_products ALTER COLUMN image_url TYPE TEXT`;
-    await sql`ALTER TABLE seller_products ALTER COLUMN purchase_url TYPE TEXT`;
-    console.log('[admin] URL columns fixed successfully!');
-    res.json({ success: true, message: 'URL columns updated to TEXT' });
+    const results = [];
+
+    // Fix seller_products URLs
+    try {
+      await sql`ALTER TABLE seller_products ALTER COLUMN image_url TYPE TEXT`;
+      await sql`ALTER TABLE seller_products ALTER COLUMN purchase_url TYPE TEXT`;
+      results.push('seller_products: fixed');
+    } catch (e) {
+      results.push('seller_products: ' + (e.message?.substring(0, 50) || 'already TEXT'));
+    }
+
+    // Fix blogs image_url
+    try {
+      await sql`ALTER TABLE blogs ALTER COLUMN image_url TYPE TEXT`;
+      results.push('blogs.image_url: fixed');
+    } catch (e) {
+      results.push('blogs.image_url: ' + (e.message?.substring(0, 50) || 'already TEXT'));
+    }
+
+    console.log('[admin] URL columns fix results:', results);
+    res.json({ success: true, message: 'URL columns updated to TEXT', results });
   } catch (e) {
     console.error('[admin] URL fix error:', e);
-    res.json({ success: false, error: e.message, note: 'Columns may already be TEXT' });
+    res.json({ success: false, error: e.message, note: 'Migration failed' });
   }
 });
 
