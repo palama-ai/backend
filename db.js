@@ -178,6 +178,14 @@ async function init() {
     `;
     console.log('[db] Created/verified blogs table');
 
+    // Migration: Update image_url to TEXT for longer URLs
+    try {
+      await sqlClient`ALTER TABLE blogs ALTER COLUMN image_url TYPE TEXT`;
+      console.log('[db] Updated blogs.image_url column to TEXT');
+    } catch (e) {
+      console.log('[db] blogs.image_url migration skipped:', e.message?.substring(0, 50));
+    }
+
     await sqlClient`CREATE INDEX IF NOT EXISTS idx_blogs_slug ON blogs(slug)`;
     await sqlClient`CREATE INDEX IF NOT EXISTS idx_blogs_published ON blogs(published)`;
 
