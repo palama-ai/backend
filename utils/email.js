@@ -123,7 +123,59 @@ async function sendWelcomeEmail(email, name) {
     }
 }
 
+/**
+ * Send email verification code
+ */
+async function sendVerificationCode(email, code, name) {
+    const transport = getTransporter();
+    if (!transport) {
+        console.log(`[email] Would send verification code ${code} to ${email} (SMTP not configured)`);
+        return { success: false, reason: 'SMTP not configured' };
+    }
+
+    const from = process.env.SMTP_FROM || process.env.SMTP_USER;
+
+    try {
+        await transport.sendMail({
+            from,
+            to: email,
+            subject: 'Glowimatch - Verify Your Email',
+            html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                    <div style="text-align: center; margin-bottom: 30px;">
+                        <h1 style="color: #ec4899; margin: 0;">Glowimatch</h1>
+                        <p style="color: #666; margin-top: 5px;">Email Verification</p>
+                    </div>
+                    
+                    <p>Hello${name ? ` ${name}` : ''},</p>
+                    <p>Welcome to Glowimatch! Please verify your email address using the code below:</p>
+                    
+                    <div style="background: linear-gradient(135deg, #ec4899 0%, #f43f5e 100%); color: white; padding: 20px; border-radius: 12px; text-align: center; margin: 25px 0;">
+                        <p style="margin: 0; font-size: 14px; opacity: 0.9;">Your Verification Code</p>
+                        <p style="margin: 10px 0 0 0; font-size: 32px; font-weight: bold; letter-spacing: 8px;">${code}</p>
+                    </div>
+                    
+                    <p style="color: #666; font-size: 14px;">This code will expire in <strong>15 minutes</strong>.</p>
+                    <p style="color: #666; font-size: 14px;">If you didn't create an account, please ignore this email.</p>
+                    
+                    <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+                    <p style="color: #999; font-size: 12px; text-align: center;">
+                        © ${new Date().getFullYear()} Glowimatch. All rights reserved.
+                    </p>
+                </div>
+            `
+        });
+
+        console.log(`[email] Verification code sent to ${email}`);
+        return { success: true };
+    } catch (err) {
+        console.error('[email] Failed to send verification code:', err.message);
+        return { success: false, reason: err.message };
+    }
+}
+
 module.exports = {
     sendPasswordResetCode,
-    sendWelcomeEmail
+    sendWelcomeEmail,
+    sendVerificationCode
 };
