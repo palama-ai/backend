@@ -4,7 +4,11 @@ const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const { sql } = require('../db');
 
-const JWT_SECRET = process.env.GLOWMATCH_JWT_SECRET || 'dev_secret_change_me';
+const JWT_SECRET = process.env.GLOWMATCH_JWT_SECRET;
+if (!JWT_SECRET) {
+  console.error('[SECURITY] CRITICAL: GLOWMATCH_JWT_SECRET environment variable is not set!');
+  process.exit(1);
+}
 
 console.log('[backend/routes/admin] admin routes loaded');
 
@@ -212,9 +216,12 @@ router.post('/create-reviews-tables', async (req, res) => {
   }
 });
 
-// Database migration endpoint - creates missing tables
+// Database migration endpoint - creates missing tables - NOW PROTECTED
 router.post('/db-migrate', async (req, res) => {
   try {
+    const admin = checkAdminAuth(req);
+    if (!admin) return res.status(403).json({ error: 'Admin access required' });
+
     console.log('[admin] Running database migration...');
 
     // Add seller columns to user_profiles if not exist
