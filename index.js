@@ -21,6 +21,7 @@ try {
 
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const bodyParser = require('express').json;
 const { init } = require('./db');
 const authRoutes = require('./routes/auth');
@@ -107,18 +108,37 @@ app.use(cors({
   credentials: true
 }));
 
-// SECURITY: Add basic security headers
-app.use((req, res, next) => {
-  // Prevent MIME type sniffing
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  // Prevent clickjacking
-  res.setHeader('X-Frame-Options', 'DENY');
-  // XSS protection (for older browsers)
-  res.setHeader('X-XSS-Protection', '1; mode=block');
-  // Referrer policy
-  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  next();
-});
+// SECURITY: HTTPS enforcement in production (redirect HTTP to HTTPS)
+if (process.env.NODE_ENV === 'production') {
+  app.use((req, res, next) => {
+    if (req.headers['x-forwarded-proto'] !== 'https') {
+      return res.redirect(301, `https://${req.headers.host}${req.url}`);
+    }
+    next();
+  });
+}
+
+// SECURITY: Helmet.js for comprehensive security headers
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://apis.google.com", "https://accounts.google.com"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      imgSrc: ["'self'", "data:", "https:", "blob:"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
+      connectSrc: ["'self'", "https://apis.google.com", "https://oauth2.googleapis.com", "https://*.cloudinary.com"],
+      frameSrc: ["https://accounts.google.com"],
+      objectSrc: ["'none'"],
+      baseUri: ["'self'"]
+    }
+  },
+  crossOriginEmbedderPolicy: false, // Allow images from external sources
+  hsts: process.env.NODE_ENV === 'production' ? {
+    maxAge: 31536000,
+    includeSubDomains: true
+  } : false
+}));
 
 // SECURITY: Basic rate limiting for auth endpoints
 const rateLimitMap = new Map();
@@ -290,23 +310,23 @@ app.get('/__routes', (req, res) => {
   }
 });
 
-// Health check with detailed database status
+// Health check with database status (SECURITY: no sensitive info exposed)
 app.get('/api/health', (req, res) => {
   try {
-    const dbUrl = process.env.DATABASE_URL;
-    const hasDbUrl = !!dbUrl;
-    const dbUrlMasked = hasDbUrl ? dbUrl.substring(0, 20) + '...' : 'NOT SET';
+    const hasDbUrl = !!process.env.DATABASE_URL;
 
     res.json({
       status: dbReady ? 'healthy' : 'initializing',
       db_ready: dbReady,
       db_initializing: dbInitializing,
       database_url_present: hasDbUrl,
-      database_url_preview: dbUrlMasked,
+      // SECURITY: database_url_preview removed to prevent information leakage
       timestamp: new Date().toISOString()
     });
   } catch (e) {
-    res.status(500).json({ status: 'error', error: String(e) });
+    // SECURITY: Hide error details in production
+    const errorMsg = process.env.NODE_ENV === 'production' ? 'Health check failed' : String(e);
+    res.status(500).json({ status: 'error', error: errorMsg });
   }
 });
 
@@ -338,6 +358,25 @@ if (fs.existsSync(buildPath)) {
 } else {
   app.get('/', (req, res) => res.json({ ok: true, msg: 'GlowMatch backend running' }));
 }
+
+// SECURITY: Global error handler - hide error details in production
+app.use((err, req, res, next) => {
+  console.error('[error]', err.stack || err);
+
+  if (process.env.NODE_ENV === 'production') {
+    // In production, don't expose error details
+    res.status(err.status || 500).json({
+      error: 'An error occurred. Please try again.',
+      requestId: req.headers['x-request-id'] || null
+    });
+  } else {
+    // In development, show full error for debugging
+    res.status(err.status || 500).json({
+      error: err.message,
+      stack: err.stack
+    });
+  }
+});
 
 // Only start the server if running directly (not imported)
 if (require.main === module) {
