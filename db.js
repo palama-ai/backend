@@ -542,43 +542,47 @@ async function init() {
     }
 
 
-    // Seed admin user if not exists (dev-friendly)
     try {
       const adminEmail = process.env.GLOWMATCH_ADMIN_EMAIL || 'admin@glowmatch.com';
-      const adminPassword = process.env.GLOWMATCH_ADMIN_PASSWORD || 'Adm1n!Glow2025#';
+      const adminPassword = process.env.GLOWMATCH_ADMIN_PASSWORD;
       const adminFullName = process.env.GLOWMATCH_ADMIN_FULLNAME || 'GlowMatch Admin';
 
-      // Check if admin already exists
-      const existing = await sqlClient`SELECT id FROM users WHERE email = ${adminEmail}`;
+      // Skip admin seeding if password not set (security: no default password)
+      if (!adminPassword) {
+        console.log('[db] Skipping admin seed: GLOWMATCH_ADMIN_PASSWORD not set');
+      } else {
+        // Check if admin already exists
+        const existing = await sqlClient`SELECT id FROM users WHERE email = ${adminEmail}`;
 
-      if (!existing || existing.length === 0) {
-        const id = uuidv4();
-        const password_hash = await bcrypt.hash(adminPassword, 10);
+        if (!existing || existing.length === 0) {
+          const id = uuidv4();
+          const password_hash = await bcrypt.hash(adminPassword, 10);
 
-        // Insert admin user
-        await sqlClient`
-          INSERT INTO users (id, email, password_hash, full_name, role)
-          VALUES (${id}, ${adminEmail}, ${password_hash}, ${adminFullName}, 'admin')
-        `;
+          // Insert admin user
+          await sqlClient`
+            INSERT INTO users (id, email, password_hash, full_name, role)
+            VALUES (${id}, ${adminEmail}, ${password_hash}, ${adminFullName}, 'admin')
+          `;
 
-        // Insert admin profile
-        await sqlClient`
-          INSERT INTO user_profiles (id, email, full_name, role)
-          VALUES (${id}, ${adminEmail}, ${adminFullName}, 'admin')
-        `;
+          // Insert admin profile
+          await sqlClient`
+            INSERT INTO user_profiles (id, email, full_name, role)
+            VALUES (${id}, ${adminEmail}, ${adminFullName}, 'admin')
+          `;
 
-        // Create admin subscription
-        const subId = uuidv4();
-        const now = new Date().toISOString();
-        const far = new Date();
-        far.setFullYear(far.getFullYear() + 100);
+          // Create admin subscription
+          const subId = uuidv4();
+          const now = new Date().toISOString();
+          const far = new Date();
+          far.setFullYear(far.getFullYear() + 100);
 
-        await sqlClient`
-          INSERT INTO user_subscriptions (id, user_id, status, plan_id, current_period_start, current_period_end, quiz_attempts_used, quiz_attempts_limit, updated_at)
-          VALUES (${subId}, ${id}, 'active', null, ${now}, ${far.toISOString()}, 0, 999999999, ${now})
-        `;
+          await sqlClient`
+            INSERT INTO user_subscriptions (id, user_id, status, plan_id, current_period_start, current_period_end, quiz_attempts_used, quiz_attempts_limit, updated_at)
+            VALUES (${subId}, ${id}, 'active', null, ${now}, ${far.toISOString()}, 0, 999999999, ${now})
+          `;
 
-        console.log(`[db] Created admin account: ${adminEmail}`);
+          console.log(`[db] Created admin account: ${adminEmail}`);
+        }
       }
     } catch (e) {
       console.error('[db] Error seeding admin user:', e);
@@ -595,6 +599,3 @@ module.exports = {
   sql,
   init
 };
-
-
-
