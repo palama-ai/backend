@@ -12,7 +12,11 @@ const { unlockAccount, reviewAppeal, isBlacklisted } = require('../lib/penaltySe
 const { getToxicIngredients, addToxicIngredient } = require('../lib/ingredientScanner');
 const { seedToxicIngredients, deepScanWithAI, TOXIC_INGREDIENTS_DATABASE } = require('../lib/safetyAgent');
 
-const JWT_SECRET = process.env.GLOWMATCH_JWT_SECRET || 'dev_secret_change_me';
+const JWT_SECRET = process.env.GLOWMATCH_JWT_SECRET;
+if (!JWT_SECRET) {
+    console.error('[SECURITY] CRITICAL: GLOWMATCH_JWT_SECRET environment variable is not set!');
+    process.exit(1);
+}
 
 // Middleware to require admin access
 const requireAdmin = async (req, res, next) => {
