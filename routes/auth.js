@@ -6,7 +6,11 @@ const { v4: uuidv4 } = require('uuid');
 const { sql } = require('../db');
 const { sendPasswordResetCode, sendVerificationCode } = require('../utils/email');
 
-const JWT_SECRET = process.env.GLOWMATCH_JWT_SECRET || 'dev_secret_change_me';
+const JWT_SECRET = process.env.GLOWMATCH_JWT_SECRET;
+if (!JWT_SECRET) {
+  console.error('[SECURITY] CRITICAL: GLOWMATCH_JWT_SECRET environment variable is not set!');
+  process.exit(1);
+}
 const TOKEN_EXPIRY = '7d'; // SECURITY: Reduced from 30d to 7d
 
 function signToken(user) {
@@ -598,7 +602,10 @@ router.post('/reset-admin', async (req, res) => {
     if (!expected || !secret || secret !== expected) return res.status(403).json({ error: 'Forbidden' });
 
     const adminEmail = process.env.GLOWMATCH_ADMIN_EMAIL || 'admin@glowmatch.com';
-    const adminPassword = process.env.GLOWMATCH_ADMIN_PASSWORD || 'Adm1n!Glow2025#';
+    const adminPassword = process.env.GLOWMATCH_ADMIN_PASSWORD;
+    if (!adminPassword) {
+      return res.status(400).json({ error: 'GLOWMATCH_ADMIN_PASSWORD environment variable is required' });
+    }
     const adminFullName = process.env.GLOWMATCH_ADMIN_FULLNAME || 'GlowMatch Admin';
 
     // hash password
