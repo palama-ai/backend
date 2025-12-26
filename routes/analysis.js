@@ -5,7 +5,11 @@ const { analyze } = require('../lib/aiProviders');
 const { generateRoutine } = require('../lib/aiProviders');
 const { sql } = require('../db');
 
-const JWT_SECRET = process.env.GLOWMATCH_JWT_SECRET || 'dev_secret_change_me';
+const JWT_SECRET = process.env.GLOWMATCH_JWT_SECRET;
+if (!JWT_SECRET) {
+  console.error('[SECURITY] CRITICAL: GLOWMATCH_JWT_SECRET environment variable is not set!');
+  process.exit(1);
+}
 
 // Helper to check auth
 function authFromHeader(req) {
