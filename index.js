@@ -40,6 +40,7 @@ const sellerRoutes = require('./routes/seller');
 const productsRoutes = require('./routes/products');
 const uploadRoutes = require('./routes/upload');
 const violationsRoutes = require('./routes/violations');
+const sitemapRoutes = require('./routes/sitemap');
 
 // 🛡️ SECURITY: Import defense system middleware
 const { securityMiddleware, getSecurityStats, getSecurityLogs } = require('./middleware/security');
@@ -79,7 +80,7 @@ app.use((req, res, next) => {
 // Configure CORS properly
 const allowedOrigins = [
   process.env.FRONTEND_URL || 'https://glowimatch.vercel.app',
-  'https://glowimatch.vercel.app','http://localhost:4028/'
+  'https://glowimatch.vercel.app',
 ];
 
 // SECURITY: Log requests with null origin but don't block (mobile apps, health checks need this)
@@ -274,6 +275,7 @@ app.use('/api/seller', sellerRoutes);
 app.use('/api/products', productsRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/admin/violations', violationsRoutes);
+app.use('/api', sitemapRoutes); // Dynamic sitemap at /api/sitemap.xml
 
 // Basic API root - helpful for health checks and to avoid "Cannot GET /api" responses
 app.get('/api', (req, res) => {
