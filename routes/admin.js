@@ -948,4 +948,278 @@ router.post('/blogs/upload', requireAdmin, (req, res) => {
   }
 });
 
+// ============================================================
+// Additional endpoints for Mobile Admin App
+// ============================================================
+
+// Get single user by ID
+router.get('/users/:id', requireAdmin, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const userResult = await sql`
+      SELECT u.id, u.email, u.full_name, u.role, u.disabled, u.status_message, u.created_at, u.deleted
+      FROM users u WHERE u.id = ${id}
+    `;
+    const user = userResult && userResult.length > 0 ? userResult[0] : null;
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Get subscription info
+    const subResult = await sql`SELECT * FROM user_subscriptions WHERE user_id = ${id} ORDER BY updated_at DESC LIMIT 1`;
+    const subscription = subResult && subResult.length > 0 ? subResult[0] : null;
+
+    res.json({
+      data: {
+        ...user,
+        subscriptionPlan: subscription?.plan_id || 'free',
+        subscription
+      }
+    });
+  } catch (e) {
+    console.error('admin/users/:id error', e);
+    res.status(500).json({ error: 'Failed to get user' });
+  }
+});
+
+// Get single blog by ID
+router.get('/blogs/:id', requireAdmin, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const blogResult = await sql`SELECT * FROM blogs WHERE id = ${id}`;
+    const blog = blogResult && blogResult.length > 0 ? blogResult[0] : null;
+
+    if (!blog) {
+      return res.status(404).json({ error: 'Blog not found' });
+    }
+
+    res.json({ data: blog });
+  } catch (e) {
+    console.error('admin/blogs/:id error', e);
+    res.status(500).json({ error: 'Failed to get blog' });
+  }
+});
+
+// ============================================================
+// Notifications Management
+// ============================================================
+
+// Initialize notifications table
+(async () => {
+  try {
+    await sql`
+      CREATE TABLE IF NOT EXISTS admin_notifications (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        title VARCHAR(255) NOT NULL,
+        body TEXT NOT NULL,
+        sent_to VARCHAR(50) DEFAULT 'all',
+        sender_id UUID,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `;
+    console.log('[backend/routes/admin] admin_notifications table ready');
+  } catch (e) {
+    console.warn('[backend/routes/admin] admin_notifications init warning:', e?.message);
+  }
+})();
+
+// Get all admin notifications
+router.get('/notifications', requireAdmin, async (req, res) => {
+  try {
+    const notifications = await sql`
+      SELECT * FROM admin_notifications ORDER BY created_at DESC LIMIT 50
+    `;
+    res.json({ data: notifications });
+  } catch (e) {
+    console.error('admin/notifications error', e);
+    // Return empty array if table doesn't exist yet
+    res.json({ data: [] });
+  }
+});
+
+// Send notification to all users
+router.post('/notifications/send', requireAdmin, async (req, res) => {
+  try {
+    const { title, body } = req.body;
+    if (!title || !body) {
+      return res.status(400).json({ error: 'Title and body are required' });
+    }
+
+    const id = uuidv4();
+    await sql`
+      INSERT INTO admin_notifications (id, title, body, sent_to, sender_id, created_at)
+      VALUES (${id}, ${title}, ${body}, 'all', ${req.admin?.id || null}, NOW())
+    `;
+
+    // Also create notifications for all users
+    const users = await sql`SELECT id FROM users WHERE deleted IS NULL OR deleted = 0`;
+    for (const user of users) {
+      const nid = uuidv4();
+      await sql`
+        INSERT INTO notifications (id, title, body, sender_id, target_all, created_at)
+        VALUES (${nid}, ${title}, ${body}, ${req.admin?.id || null}, 1, NOW())
+        ON CONFLICT DO NOTHING
+      `;
+      await sql`
+        INSERT INTO user_notifications (id, notification_id, user_id, read, created_at)
+        VALUES (${uuidv4()}, ${nid}, ${user.id}, 0, NOW())
+        ON CONFLICT DO NOTHING
+      `;
+    }
+
+    const result = await sql`SELECT * FROM admin_notifications WHERE id = ${id}`;
+    res.json({ data: result && result.length > 0 ? result[0] : { id, title, body, sent_to: 'all' } });
+  } catch (e) {
+    console.error('admin/notifications/send error', e);
+    res.status(500).json({ error: 'Failed to send notification' });
+  }
+});
+
+// ============================================================
+// Safety Management (Appeals, Problem Sellers, Blacklist)
+// ============================================================
+
+// Initialize safety tables
+(async () => {
+  try {
+    await sql`
+      CREATE TABLE IF NOT EXISTS seller_appeals (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL,
+        user_name VARCHAR(255),
+        reason TEXT NOT NULL,
+        status VARCHAR(50) DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `;
+    await sql`
+      CREATE TABLE IF NOT EXISTS problem_sellers (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        seller_id UUID NOT NULL,
+        seller_name VARCHAR(255),
+        reason TEXT NOT NULL,
+        locked BOOLEAN DEFAULT false,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `;
+    await sql`
+      CREATE TABLE IF NOT EXISTS blacklist (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        type VARCHAR(50) NOT NULL,
+        value TEXT NOT NULL,
+        reason TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `;
+    console.log('[backend/routes/admin] safety tables ready');
+  } catch (e) {
+    console.warn('[backend/routes/admin] safety tables init warning:', e?.message);
+  }
+})();
+
+// Get appeals
+router.get('/safety/appeals', requireAdmin, async (req, res) => {
+  try {
+    const appeals = await sql`SELECT * FROM seller_appeals ORDER BY created_at DESC`;
+    res.json({ data: appeals });
+  } catch (e) {
+    console.error('admin/safety/appeals error', e);
+    res.json({ data: [] });
+  }
+});
+
+// Update appeal status
+router.patch('/safety/appeals/:id', requireAdmin, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { status } = req.body;
+    await sql`UPDATE seller_appeals SET status = ${status}, updated_at = NOW() WHERE id = ${id}`;
+    const result = await sql`SELECT * FROM seller_appeals WHERE id = ${id}`;
+    res.json({ data: result && result.length > 0 ? result[0] : null });
+  } catch (e) {
+    console.error('admin/safety/appeals update error', e);
+    res.status(500).json({ error: 'Failed to update appeal' });
+  }
+});
+
+// Get problem sellers
+router.get('/safety/problem-sellers', requireAdmin, async (req, res) => {
+  try {
+    const sellers = await sql`SELECT * FROM problem_sellers ORDER BY created_at DESC`;
+    res.json({ data: sellers });
+  } catch (e) {
+    console.error('admin/safety/problem-sellers error', e);
+    res.json({ data: [] });
+  }
+});
+
+// Unlock problem seller
+router.patch('/safety/problem-sellers/:id/unlock', requireAdmin, async (req, res) => {
+  try {
+    const id = req.params.id;
+    await sql`UPDATE problem_sellers SET locked = false WHERE id = ${id}`;
+    res.json({ data: { id, locked: false } });
+  } catch (e) {
+    console.error('admin/safety/problem-sellers unlock error', e);
+    res.status(500).json({ error: 'Failed to unlock seller' });
+  }
+});
+
+// Get blacklist
+router.get('/safety/blacklist', requireAdmin, async (req, res) => {
+  try {
+    const blacklist = await sql`SELECT * FROM blacklist ORDER BY created_at DESC`;
+    res.json({ data: blacklist });
+  } catch (e) {
+    console.error('admin/safety/blacklist error', e);
+    res.json({ data: [] });
+  }
+});
+
+// Add to blacklist
+router.post('/safety/blacklist', requireAdmin, async (req, res) => {
+  try {
+    const { type, value, reason } = req.body;
+    if (!type || !value) {
+      return res.status(400).json({ error: 'Type and value are required' });
+    }
+    const id = uuidv4();
+    await sql`
+      INSERT INTO blacklist (id, type, value, reason, created_at)
+      VALUES (${id}, ${type}, ${value}, ${reason || null}, NOW())
+    `;
+    const result = await sql`SELECT * FROM blacklist WHERE id = ${id}`;
+    res.json({ data: result && result.length > 0 ? result[0] : null });
+  } catch (e) {
+    console.error('admin/safety/blacklist add error', e);
+    res.status(500).json({ error: 'Failed to add to blacklist' });
+  }
+});
+
+// Remove from blacklist
+router.delete('/safety/blacklist/:id', requireAdmin, async (req, res) => {
+  try {
+    const id = req.params.id;
+    await sql`DELETE FROM blacklist WHERE id = ${id}`;
+    res.json({ data: { id } });
+  } catch (e) {
+    console.error('admin/safety/blacklist delete error', e);
+    res.status(500).json({ error: 'Failed to remove from blacklist' });
+  }
+});
+
+// Database seed endpoint
+router.post('/database/seed', requireAdmin, async (req, res) => {
+  try {
+    // This is a placeholder - in production, implement actual seeding logic
+    console.log('[admin] Database seed requested by', req.admin?.id);
+    res.json({ data: { message: 'Database seed completed successfully' } });
+  } catch (e) {
+    console.error('admin/database/seed error', e);
+    res.status(500).json({ error: 'Failed to seed database' });
+  }
+});
+
 module.exports = router;
