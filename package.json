@@ -8,17 +8,28 @@
 		"dev": "nodemon index.js"
 	},
 	"dependencies": {
+		"@neondatabase/serverless": "^0.9.2",
+		"@prisma/client": "^5.6.0",
+		"axios": "^1.13.3",
 		"bcrypt": "^6.0.0",
-		"better-sqlite3": "^12.4.1",
+		"cloudinary": "^2.8.0",
 		"cors": "^2.8.5",
 		"dotenv": "^17.2.3",
 		"express": "^5.1.0",
-		"jimp": "^0.16.1",
+		"helmet": "^8.0.0",
+		"jimp": "^1.6.0",
 		"jsonwebtoken": "^9.0.2",
+		"multer": "^2.0.2",
 		"node-fetch": "^2.7.0",
-		"uuid": "^13.0.0"
+		"nodemailer": "^7.0.12",
+		"pg": "^8.10.0",
+		"prisma": "^5.6.0",
+		"uuid": "^9.0.0"
 	},
 	"devDependencies": {
 		"nodemon": "^3.1.10"
+	},
+	"prisma": {
+		"seed": "node ./scripts/migrate_sqlite_to_postgres.js"
 	}
 }
