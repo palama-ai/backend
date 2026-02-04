@@ -42,6 +42,8 @@ const uploadRoutes = require('./routes/upload');
 const violationsRoutes = require('./routes/violations');
 const sitemapRoutes = require('./routes/sitemap');
 const irisRoutes = require('./routes/iris');
+const barcodeRoutes = require('./routes/barcode');
+const productOnboardingRoutes = require('./routes/productOnboarding');
 
 // 🛡️ SECURITY: Import defense system middleware
 const { securityMiddleware, getSecurityStats, getSecurityLogs } = require('./middleware/security');
@@ -279,6 +281,8 @@ app.use('/api/products', productsRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/admin/violations', violationsRoutes);
 app.use('/api/iris', irisRoutes); // 👁️ IRIS Monitoring API
+app.use('/api/barcode', barcodeRoutes); // 📦 Barcode lookup API
+app.use('/api/product-onboarding', productOnboardingRoutes); // 🤖 AI product analysis API
 app.use('/api', sitemapRoutes); // Dynamic sitemap at /api/sitemap.xml
 
 // Basic API root - helpful for health checks and to avoid "Cannot GET /api" responses
