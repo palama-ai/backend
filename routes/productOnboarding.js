@@ -65,37 +65,64 @@ router.post('/analyze-image', requireSeller, async (req, res) => {
         }
 
         console.log(`[product-onboarding] Starting AI analysis for seller: ${req.user.email}`);
+        console.log(`[product-onboarding] Image size: ${image.length} characters`);
 
         // Step 1: Extract text using OCR
         const ocrResult = await analyzeProductImageWithOCR(image);
 
-        console.log(`[product-onboarding] OCR result - Brand: ${ocrResult.brand}, Name: ${ocrResult.name}, Confidence: ${ocrResult.confidence}`);
+        console.log(`[product-onboarding] OCR Result:`, {
+            brand: ocrResult.brand,
+            name: ocrResult.name,
+            ingredientsLength: ocrResult.ingredients?.length || 0,
+            confidence: ocrResult.confidence,
+            parseError: ocrResult.parseError
+        });
+
+        // Validate that we got proper data - name should be short, ingredients should be long
+        let validatedResult = { ...ocrResult };
+
+        // If name looks like ingredients (very long with commas), fix the mapping
+        if (ocrResult.name && ocrResult.name.length > 100 && ocrResult.name.includes(',')) {
+            console.log(`[product-onboarding] Detected ingredients in name field, correcting...`);
+            // The name field contains ingredients
+            if (!ocrResult.ingredients || ocrResult.ingredients.length < ocrResult.name.length) {
+                validatedResult.ingredients = ocrResult.name;
+                validatedResult.name = ''; // Clear the name, user will need to enter it
+            }
+        }
 
         // Step 2: Generate product description if we have enough data
         let suggestedDescription = '';
         let highlightedIngredients = [];
 
-        if (ocrResult.name || ocrResult.ingredients) {
-            const descResult = await generateProductDescription(
-                ocrResult.name,
-                ocrResult.brand,
-                ocrResult.ingredients
-            );
-            suggestedDescription = descResult.description;
-            highlightedIngredients = descResult.highlightedIngredients || [];
+        if (validatedResult.name || validatedResult.ingredients || validatedResult.brand) {
+            console.log(`[product-onboarding] Generating description...`);
+            try {
+                const descResult = await generateProductDescription(
+                    validatedResult.name,
+                    validatedResult.brand,
+                    validatedResult.ingredients
+                );
+                suggestedDescription = descResult.description || '';
+                highlightedIngredients = descResult.highlightedIngredients || [];
+                console.log(`[product-onboarding] Description generated: ${suggestedDescription.substring(0, 100)}...`);
+            } catch (descError) {
+                console.error('[product-onboarding] Description generation failed:', descError.message);
+                // Continue without description - not a fatal error
+            }
         }
 
         // Return combined result
         res.json({
             success: true,
             data: {
-                brand: ocrResult.brand || '',
-                name: ocrResult.name || '',
-                ingredients: ocrResult.ingredients || '',
+                brand: validatedResult.brand || '',
+                name: validatedResult.name || '',
+                ingredients: validatedResult.ingredients || '',
                 suggestedDescription: suggestedDescription,
                 highlightedIngredients: highlightedIngredients,
-                confidence: ocrResult.confidence || 0,
-                parseError: ocrResult.parseError || false
+                confidence: validatedResult.confidence || 0,
+                parseError: validatedResult.parseError || false
             }
         });
 
