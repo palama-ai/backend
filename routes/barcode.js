@@ -1,11 +1,13 @@
 const express = require('express');
 const router = express.Router();
 const fetch = require('node-fetch');
+const { generateProductDescription } = require('../lib/aiProviders');
 
 /**
  * GET /api/barcode/lookup/:code
  * Lookup product information from Open Beauty Facts database
  * Falls back to Open Food Facts if not found in beauty database
+ * Also generates AI description if product is found
  */
 router.get('/lookup/:code', async (req, res) => {
     try {
@@ -41,6 +43,28 @@ router.get('/lookup/:code', async (req, res) => {
 
         if (product) {
             console.log(`[barcode] Found product: ${product.name}`);
+
+            // Generate AI description for the product
+            let suggestedDescription = '';
+            let highlightedIngredients = [];
+
+            if (product.name || product.ingredients || product.brand) {
+                try {
+                    console.log(`[barcode] Generating AI description for: ${product.brand} ${product.name}`);
+                    const descResult = await generateProductDescription(
+                        product.name,
+                        product.brand,
+                        product.ingredients
+                    );
+                    suggestedDescription = descResult.description || '';
+                    highlightedIngredients = descResult.highlightedIngredients || [];
+                    console.log(`[barcode] Description generated successfully`);
+                } catch (descError) {
+                    console.error('[barcode] Description generation failed:', descError.message);
+                    // Continue without description - not a fatal error
+                }
+            }
+
             return res.json({
                 found: true,
                 product: {
@@ -49,7 +73,9 @@ router.get('/lookup/:code', async (req, res) => {
                     ingredients: product.ingredients || '',
                     imageUrl: product.imageUrl || '',
                     category: product.category || '',
-                    source: product.source
+                    source: product.source,
+                    suggestedDescription: suggestedDescription,
+                    highlightedIngredients: highlightedIngredients
                 }
             });
         }
@@ -68,6 +94,7 @@ router.get('/lookup/:code', async (req, res) => {
         });
     }
 });
+
 
 
 /**
