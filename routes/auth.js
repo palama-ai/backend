@@ -301,7 +301,7 @@ router.post('/login', async (req, res) => {
       return res.status(403).json({ error: 'Account disabled', message: msg });
     }
 
-    res.json({ data: { user: { id: user.id, email: user.email, full_name: user.full_name, role: user.role, referral_code: user.referral_code, email_verified: true }, token } });
+    res.json({ data: { user: { id: user.id, email: user.email, full_name: user.full_name, role: user.role, referral_code: user.referral_code, email_verified: true, terms_accepted: !!user.terms_accepted }, token } });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to login' });
@@ -317,7 +317,7 @@ router.get('/session', async (req, res) => {
     const token = auth.replace('Bearer ', '');
     const payload = jwt.verify(token, JWT_SECRET);
 
-    const userResult = await sql`SELECT id, email, full_name, role, disabled, deleted, status_message FROM users WHERE id = ${payload.id}`;
+    const userResult = await sql`SELECT id, email, full_name, role, disabled, deleted, status_message, terms_accepted FROM users WHERE id = ${payload.id}`;
     if (!userResult || userResult.length === 0) return res.json({ data: { session: null } });
 
     const user = userResult[0];
@@ -325,7 +325,7 @@ router.get('/session', async (req, res) => {
     // If deleted, return null session to force re-login and surface message via client (client may call a debug endpoint)
     if (user.deleted) return res.status(200).json({ data: { session: null, deleted: true, message: 'Your account has been deleted. Contact support for more information.' } });
 
-    const session = { user: { id: user.id, email: user.email, full_name: user.full_name, role: user.role, disabled: !!user.disabled, status_message: user.status_message || null } };
+    const session = { user: { id: user.id, email: user.email, full_name: user.full_name, role: user.role, disabled: !!user.disabled, status_message: user.status_message || null, terms_accepted: !!user.terms_accepted } };
     return res.json({ data: { session } });
   } catch (err) {
     return res.json({ data: { session: null } });
