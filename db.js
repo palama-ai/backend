@@ -413,6 +413,37 @@ async function init() {
     await sqlClient`CREATE INDEX IF NOT EXISTS idx_followers_follower_id ON followers(follower_id)`;
     await sqlClient`CREATE INDEX IF NOT EXISTS idx_followers_following_id ON followers(following_id)`;
 
+    // Product Likes System
+    await sqlClient`
+      CREATE TABLE IF NOT EXISTS product_likes (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        product_id UUID REFERENCES seller_products(id) ON DELETE CASCADE,
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        created_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(product_id, user_id)
+      )
+    `;
+    console.log('[db] Created/verified product_likes table');
+
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_product_likes_product_id ON product_likes(product_id)`;
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_product_likes_user_id ON product_likes(user_id)`;
+
+    // Migrations: Add likes_count to seller_products
+    try {
+      await sqlClient`ALTER TABLE seller_products ADD COLUMN IF NOT EXISTS likes_count INTEGER DEFAULT 0`;
+      console.log('[db] Added/verified likes_count in seller_products');
+    } catch (e) {
+      // Ignored
+    }
+
+    // Migrations: Add avatar_url to user_profiles
+    try {
+      await sqlClient`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS avatar_url TEXT`;
+      console.log('[db] Added/verified avatar_url in user_profiles');
+    } catch (e) {
+      // Ignored
+    }
+
 
     // ============================================
     // PRODUCT SAFETY & SELLER PENALTY SYSTEM
