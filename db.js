@@ -398,6 +398,22 @@ async function init() {
 
     await sqlClient`CREATE INDEX IF NOT EXISTS idx_comment_likes_comment_id ON comment_likes(comment_id)`;
 
+    // Followers system
+    await sqlClient`
+      CREATE TABLE IF NOT EXISTS followers (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        follower_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        following_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        created_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(follower_id, following_id)
+      )
+    `;
+    console.log('[db] Created/verified followers table');
+
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_followers_follower_id ON followers(follower_id)`;
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_followers_following_id ON followers(following_id)`;
+
+
     // ============================================
     // PRODUCT SAFETY & SELLER PENALTY SYSTEM
     // ============================================
