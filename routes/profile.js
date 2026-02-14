@@ -146,7 +146,7 @@ router.get('/public/:userId', async (req, res) => {
   try {
     // Get profile data
     const profileResult = await sql`
-      SELECT id, full_name, brand_name, bio, website, role, created_at 
+      SELECT id, full_name, brand_name, bio, website, role, updated_at 
       FROM user_profiles 
       WHERE id = ${userId}
     `;
