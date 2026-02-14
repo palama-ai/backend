@@ -140,5 +140,49 @@ router.put('/', async (req, res) => {
   }
 });
 
+// GET public profile (no auth required for basic info)
+router.get('/public/:userId', async (req, res) => {
+  const { userId } = req.params;
+  try {
+    // Get profile data
+    const profileResult = await sql`
+      SELECT id, full_name, brand_name, bio, website, role, created_at 
+      FROM user_profiles 
+      WHERE id = ${userId}
+    `;
+
+    if (!profileResult || profileResult.length === 0) {
+      // Try users table
+      const userResult = await sql`SELECT id, full_name, role, created_at FROM users WHERE id = ${userId}`;
+      if (!userResult || userResult.length === 0) return res.status(404).json({ error: 'User not found' });
+
+      // Return limit info from users table if profile not found
+      return res.json({ data: userResult[0] });
+    }
+
+    const profile = profileResult[0];
+
+    // Get social stats
+    const followersCount = await sql`SELECT COUNT(*) as count FROM followers WHERE following_id = ${userId}`;
+    const followingCount = await sql`SELECT COUNT(*) as count FROM followers WHERE follower_id = ${userId}`;
+    const productsCount = await sql`SELECT COUNT(*) as count FROM seller_products WHERE seller_id = ${userId} AND published = 1`;
+
+    res.json({
+      data: {
+        ...profile,
+        stats: {
+          followers: parseInt(followersCount[0].count),
+          following: parseInt(followingCount[0].count),
+          products: parseInt(productsCount[0].count)
+        }
+      }
+    });
+  } catch (err) {
+    console.error('[profile.public] error:', err);
+    res.status(500).json({ error: 'Failed to load public profile' });
+  }
+});
+
 module.exports = router;
+
 
