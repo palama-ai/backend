@@ -140,13 +140,17 @@ router.get('/recommended', async (req, res) => {
         // Fetch all published products
         let products = await sql`
             SELECT 
-                id, seller_id, name, brand, description, 
-                price, original_price, image_url, category,
-                skin_types, concerns, purchase_url, view_count
-            FROM seller_products 
-            WHERE published = 1
-            ORDER BY view_count DESC, created_at DESC
-            ORDER BY view_count DESC, created_at DESC
+                sp.id, sp.seller_id, sp.name, sp.brand, sp.description, 
+                sp.price, sp.original_price, sp.image_url, sp.category,
+                sp.skin_types, sp.concerns, sp.purchase_url, sp.view_count, sp.likes_count,
+                sp.ingredients,
+                up.avatar_url as seller_avatar,
+                COALESCE(up.brand_name, u.full_name) as seller_name
+            FROM seller_products sp
+            LEFT JOIN users u ON u.id = sp.seller_id
+            LEFT JOIN user_profiles up ON up.id = sp.seller_id
+            WHERE sp.published = 1
+            ORDER BY sp.view_count DESC, sp.created_at DESC
         `;
 
         // Score and filter products based on matching
@@ -246,12 +250,17 @@ router.get('/public/seller/:sellerId', async (req, res) => {
 
         const products = await sql`
             SELECT 
-                id, seller_id, name, brand, description, 
-                price, original_price, image_url, category,
-                skin_types, concerns, purchase_url, view_count
-            FROM seller_products 
-            WHERE seller_id = ${sellerId} AND published = 1
-            ORDER BY created_at DESC
+                sp.id, sp.seller_id, sp.name, sp.brand, sp.description, 
+                sp.price, sp.original_price, sp.image_url, sp.category,
+                sp.skin_types, sp.concerns, sp.purchase_url, sp.view_count, sp.likes_count,
+                sp.ingredients,
+                up.avatar_url as seller_avatar,
+                COALESCE(up.brand_name, u.full_name) as seller_name
+            FROM seller_products sp
+            LEFT JOIN users u ON u.id = sp.seller_id
+            LEFT JOIN user_profiles up ON up.id = sp.seller_id
+            WHERE sp.seller_id = ${sellerId} AND sp.published = 1
+            ORDER BY sp.created_at DESC
         `;
 
         // Parse and normalize
@@ -645,6 +654,50 @@ router.delete('/:id/comments/:commentId', requireAuth, async (req, res) => {
     } catch (err) {
         console.error('[products] Error deleting comment:', err);
         res.status(500).json({ error: 'Failed to delete comment' });
+    }
+});
+
+/**
+ * POST /api/products/:id/like
+ * Toggle like on a product
+ */
+router.post('/:id/like', requireAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userId = req.user.id;
+
+        // Check if already liked
+        const existing = await sql`
+            SELECT id FROM product_likes 
+            WHERE product_id = ${id} AND user_id = ${userId}
+        `;
+
+        let isLiked = false;
+
+        if (existing && existing.length > 0) {
+            // Unlike
+            await sql`DELETE FROM product_likes WHERE product_id = ${id} AND user_id = ${userId}`;
+            await sql`UPDATE seller_products SET likes_count = GREATEST(likes_count - 1, 0) WHERE id = ${id}`;
+            isLiked = false;
+        } else {
+            // Like
+            await sql`
+                INSERT INTO product_likes (id, product_id, user_id)
+                VALUES (gen_random_uuid(), ${id}, ${userId})
+                ON CONFLICT (product_id, user_id) DO NOTHING
+            `;
+            await sql`UPDATE seller_products SET likes_count = COALESCE(likes_count, 0) + 1 WHERE id = ${id}`;
+            isLiked = true;
+        }
+
+        // Get updated count
+        const countResult = await sql`SELECT likes_count FROM seller_products WHERE id = ${id}`;
+        const likesCount = countResult[0]?.likes_count || 0;
+
+        res.json({ success: true, isLiked, likesCount });
+    } catch (err) {
+        console.error('[products] Error liking product:', err);
+        res.status(500).json({ error: 'Failed to like product' });
     }
 });
 
