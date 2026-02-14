@@ -146,6 +146,7 @@ router.get('/recommended', async (req, res) => {
             FROM seller_products 
             WHERE published = 1
             ORDER BY view_count DESC, created_at DESC
+            ORDER BY view_count DESC, created_at DESC
         `;
 
         // Score and filter products based on matching
@@ -232,6 +233,53 @@ router.get('/recommended', async (req, res) => {
     } catch (err) {
         console.error('[products] Error fetching recommended products:', err);
         res.status(500).json({ error: 'Failed to fetch products' });
+    }
+});
+
+/**
+ * GET /api/products/public/seller/:sellerId
+ * Get all public products for a specific seller
+ */
+router.get('/public/seller/:sellerId', async (req, res) => {
+    try {
+        const { sellerId } = req.params;
+
+        const products = await sql`
+            SELECT 
+                id, seller_id, name, brand, description, 
+                price, original_price, image_url, category,
+                skin_types, concerns, purchase_url, view_count
+            FROM seller_products 
+            WHERE seller_id = ${sellerId} AND published = 1
+            ORDER BY created_at DESC
+        `;
+
+        // Parse and normalize
+        const parsedProducts = products.map(product => {
+            let skinTypes = [];
+            let concerns = [];
+            try {
+                if (product.skin_types) skinTypes = typeof product.skin_types === 'string' ? JSON.parse(product.skin_types) : product.skin_types;
+                if (product.concerns) concerns = typeof product.concerns === 'string' ? JSON.parse(product.concerns) : product.concerns;
+            } catch (e) { }
+
+            return {
+                ...product,
+                skin_types: skinTypes,
+                concerns: concerns,
+                image: product.image_url,
+                purchaseUrl: product.purchase_url,
+                originalPrice: product.original_price,
+                rating: 4.5,
+                reviewCount: Math.floor(Math.random() * 100) + 10,
+                type: product.category
+            };
+        });
+
+        res.json({ data: parsedProducts });
+    } catch (err) {
+        console.error('[products] Error fetching seller products:', err);
+        res.status(500).json({ error: 'Failed to fetch seller products' });
     }
 });
 
