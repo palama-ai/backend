@@ -145,7 +145,8 @@ router.get('/recommended', async (req, res) => {
                 sp.skin_types, sp.concerns, sp.purchase_url, sp.view_count, sp.likes_count,
                 sp.ingredients,
                 up.avatar_url as seller_avatar,
-                COALESCE(up.brand_name, u.full_name) as seller_name
+                u.full_name as seller_fullname,
+                up.brand_name as seller_brand_name
             FROM seller_products sp
             LEFT JOIN users u ON u.id = sp.seller_id
             LEFT JOIN user_profiles up ON up.id = sp.seller_id
@@ -255,7 +256,8 @@ router.get('/public/seller/:sellerId', async (req, res) => {
                 sp.skin_types, sp.concerns, sp.purchase_url, sp.view_count, sp.likes_count,
                 sp.ingredients,
                 up.avatar_url as seller_avatar,
-                COALESCE(up.brand_name, u.full_name) as seller_name
+                u.full_name as seller_fullname,
+                up.brand_name as seller_brand_name
             FROM seller_products sp
             LEFT JOIN users u ON u.id = sp.seller_id
             LEFT JOIN user_profiles up ON up.id = sp.seller_id
