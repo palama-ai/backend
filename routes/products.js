@@ -3,6 +3,7 @@ const router = express.Router();
 const jwt = require('jsonwebtoken');
 const { sql } = require('../db');
 const { voteOnProducts } = require('../lib/aiProviders');
+const { sendPushNotification } = require('../lib/pushNotifications');
 
 const JWT_SECRET = process.env.GLOWMATCH_JWT_SECRET;
 if (!JWT_SECRET) {
@@ -683,13 +684,20 @@ router.post('/:id/like', requireAuth, async (req, res) => {
             isLiked = false;
         } else {
             // Like
-            await sql`
-                INSERT INTO product_likes (id, product_id, user_id)
-                VALUES (gen_random_uuid(), ${id}, ${userId})
-                ON CONFLICT (product_id, user_id) DO NOTHING
-            `;
             await sql`UPDATE seller_products SET likes_count = COALESCE(likes_count, 0) + 1 WHERE id = ${id}`;
             isLiked = true;
+
+            // Notify seller about the like
+            const product = await sql`SELECT seller_id, name FROM seller_products WHERE id = ${id}`;
+            if (product && product.length > 0 && product[0].seller_id !== userId) {
+                const likerName = req.user.full_name || 'Someone';
+                await sendPushNotification(
+                    product[0].seller_id,
+                    'New Product Like! ❤️',
+                    `${likerName} liked your product "${product[0].name}"`,
+                    { type: 'like', productId: id }
+                );
+            }
         }
 
         // Get updated count
