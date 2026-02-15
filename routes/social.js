@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { sql } = require('../db');
 const jwt = require('jsonwebtoken');
+const { sendPushNotification } = require('../lib/pushNotifications');
 
 const JWT_SECRET = process.env.GLOWMATCH_JWT_SECRET;
 
@@ -49,6 +50,15 @@ router.post('/follow/:targetId', requireAuth, async (req, res) => {
         // Get updated follower count for target
         const countResult = await sql`SELECT COUNT(*) as count FROM followers WHERE following_id = ${targetId}`;
         const followerCount = parseInt(countResult[0].count);
+
+        // Send push notification to target user
+        const followerName = req.user.full_name || 'Someone';
+        await sendPushNotification(
+            targetId,
+            'New Follower! 🎉',
+            `${followerName} started following you.`,
+            { type: 'follow', followerId }
+        );
 
         res.json({ success: true, isFollowing: true, followerCount });
     } catch (err) {
