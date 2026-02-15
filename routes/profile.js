@@ -63,7 +63,22 @@ router.get('/:userId', async (req, res) => {
 
     const remainingSlots = Math.max(0, 10 - recentCount);
 
-    res.json({ data: { ...profile, referralStats: { totalReferrals, recentCount, remainingSlots } } });
+    // Get social stats (same as public profile)
+    const followersCount = await sql`SELECT COUNT(*) as c FROM followers WHERE following_id = ${userId}`;
+    const followingCount = await sql`SELECT COUNT(*) as c FROM followers WHERE follower_id = ${userId}`;
+    const productsCount = await sql`SELECT COUNT(*) as c FROM seller_products WHERE seller_id = ${userId} AND published = 1`;
+
+    res.json({
+      data: {
+        ...profile,
+        referralStats: { totalReferrals, recentCount, remainingSlots },
+        stats: {
+          followers: parseInt(followersCount[0].c),
+          following: parseInt(followingCount[0].c),
+          products: parseInt(productsCount[0].c)
+        }
+      }
+    });
   } catch (err) {
     console.error('[profile.get] error:', err);
     res.status(500).json({ error: 'Failed to load profile' });
@@ -82,14 +97,17 @@ router.put('/:userId', async (req, res) => {
     const existingRole = userResult && userResult.length > 0 ? userResult[0].role : 'user';
 
     await sql`
-      INSERT INTO user_profiles (id, email, full_name, role, referral_code, brand_name, website, bio, updated_at)
-      VALUES (${auth.id}, ${updates.email || auth.email}, ${updates.full_name || updates.fullName || null}, ${existingRole}, ${referralCode}, ${updates.brand_name || null}, ${updates.website || null}, ${updates.bio || null}, NOW())
+      INSERT INTO user_profiles (id, email, full_name, role, referral_code, brand_name, website, bio, avatar_url, banner_url, website_icon, updated_at)
+      VALUES (${auth.id}, ${updates.email || auth.email}, ${updates.full_name || updates.fullName || null}, ${existingRole}, ${referralCode}, ${updates.brand_name || null}, ${updates.website || null}, ${updates.bio || null}, ${updates.avatar_url || null}, ${updates.banner_url || null}, ${updates.website_icon || null}, NOW())
       ON CONFLICT (id) DO UPDATE SET 
         email = COALESCE(${updates.email}, user_profiles.email), 
         full_name = COALESCE(${updates.full_name || updates.fullName}, user_profiles.full_name), 
         brand_name = COALESCE(${updates.brand_name}, user_profiles.brand_name),
         website = COALESCE(${updates.website}, user_profiles.website),
         bio = COALESCE(${updates.bio}, user_profiles.bio),
+        avatar_url = COALESCE(${updates.avatar_url}, user_profiles.avatar_url),
+        banner_url = COALESCE(${updates.banner_url}, user_profiles.banner_url),
+        website_icon = COALESCE(${updates.website_icon}, user_profiles.website_icon),
         updated_at = NOW()
     `;
 
@@ -118,13 +136,16 @@ router.put('/', async (req, res) => {
     const existingRole = userResult && userResult.length > 0 ? userResult[0].role : 'user';
 
     await sql`
-      INSERT INTO user_profiles (id, email, full_name, role, referral_code, brand_name, website, bio, updated_at)
-      VALUES (${auth.id}, ${auth.email}, ${updates.full_name || null}, ${existingRole}, ${referralCode}, ${updates.brand_name || null}, ${updates.website || null}, ${updates.bio || null}, NOW())
+      INSERT INTO user_profiles (id, email, full_name, role, referral_code, brand_name, website, bio, avatar_url, banner_url, website_icon, updated_at)
+      VALUES (${auth.id}, ${auth.email}, ${updates.full_name || null}, ${existingRole}, ${referralCode}, ${updates.brand_name || null}, ${updates.website || null}, ${updates.bio || null}, ${updates.avatar_url || null}, ${updates.banner_url || null}, ${updates.website_icon || null}, NOW())
       ON CONFLICT (id) DO UPDATE SET 
         full_name = COALESCE(${updates.full_name}, user_profiles.full_name), 
         brand_name = COALESCE(${updates.brand_name}, user_profiles.brand_name),
         website = COALESCE(${updates.website}, user_profiles.website),
         bio = COALESCE(${updates.bio}, user_profiles.bio),
+        avatar_url = COALESCE(${updates.avatar_url}, user_profiles.avatar_url),
+        banner_url = COALESCE(${updates.banner_url}, user_profiles.banner_url),
+        website_icon = COALESCE(${updates.website_icon}, user_profiles.website_icon),
         updated_at = NOW()
     `;
 
@@ -146,7 +167,7 @@ router.get('/public/:userId', async (req, res) => {
   try {
     // Get profile data
     const profileResult = await sql`
-      SELECT id, full_name, brand_name, bio, website, role, updated_at 
+      SELECT id, full_name, brand_name, bio, website, role, avatar_url, banner_url, website_icon, updated_at 
       FROM user_profiles 
       WHERE id = ${userId}
     `;
