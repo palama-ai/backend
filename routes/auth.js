@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const { sql } = require('../db');
 const { sendPasswordResetCode, sendVerificationCode } = require('../utils/email');
+const { sendPushNotification } = require('../lib/pushNotifications');
 
 const JWT_SECRET = process.env.GLOWMATCH_JWT_SECRET;
 if (!JWT_SECRET) {
@@ -299,6 +300,20 @@ router.post('/login', async (req, res) => {
     if (user.disabled) {
       const msg = user.status_message || 'Your account has been disabled due to policy violations. Please contact support for more information.';
       return res.status(403).json({ error: 'Account disabled', message: msg });
+    }
+
+    // Send login alert notification (Security)
+    try {
+      if (user.push_token) {
+        await sendPushNotification(
+          user.id,
+          'New Login Detected 🔐',
+          `New login from device on ${new Date().toLocaleTimeString()}`,
+          { type: 'security_alert' }
+        );
+      }
+    } catch (e) {
+      console.log('[auth] Failed to send login alert:', e.message);
     }
 
     res.json({ data: { user: { id: user.id, email: user.email, full_name: user.full_name, role: user.role, referral_code: user.referral_code, email_verified: true, terms_accepted: !!user.terms_accepted }, token } });
