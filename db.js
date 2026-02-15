@@ -112,6 +112,7 @@ async function init() {
       await sqlClient`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS bio TEXT`;
       await sqlClient`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS banner_url TEXT`;
       await sqlClient`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS website_icon VARCHAR(50)`;
+      await sqlClient`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS push_token VARCHAR(255)`;
       console.log('[db] Added/verified seller columns in user_profiles');
     } catch (e) {
       console.log('[db] Seller columns migration skipped:', e.message);
