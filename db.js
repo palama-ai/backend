@@ -106,17 +106,41 @@ async function init() {
     console.log('[db] Created/verified user_profiles table');
 
     // Add missing columns for existing tables (migration)
+    // Add missing columns for existing tables (migration) - SPLIT for robustness
     try {
       await sqlClient`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS brand_name VARCHAR(255)`;
+      console.log('[db] Verified column: brand_name');
+    } catch (e) { console.log('[db] brand_name migration skipped:', e.message); }
+
+    try {
       await sqlClient`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS website VARCHAR(500)`;
+      console.log('[db] Verified column: website');
+    } catch (e) { console.log('[db] website migration skipped:', e.message); }
+
+    try {
       await sqlClient`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS bio TEXT`;
+      console.log('[db] Verified column: bio');
+    } catch (e) { console.log('[db] bio migration skipped:', e.message); }
+
+    try {
       await sqlClient`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS banner_url TEXT`;
+      console.log('[db] Verified column: banner_url');
+    } catch (e) { console.log('[db] banner_url migration skipped:', e.message); }
+
+    try {
       await sqlClient`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS website_icon VARCHAR(50)`;
+      console.log('[db] Verified column: website_icon');
+    } catch (e) { console.log('[db] website_icon migration skipped:', e.message); }
+
+    try {
       await sqlClient`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS push_token VARCHAR(255)`;
-      console.log('[db] Added/verified seller columns in user_profiles');
-    } catch (e) {
-      console.log('[db] Seller columns migration skipped:', e.message);
-    }
+      console.log('[db] Verified column: push_token');
+    } catch (e) { console.log('[db] push_token migration skipped:', e.message); }
+
+    try {
+      await sqlClient`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS avatar_url TEXT`;
+      console.log('[db] Verified column: avatar_url');
+    } catch (e) { console.log('[db] avatar_url migration skipped:', e.message); }
 
     await sqlClient`CREATE INDEX IF NOT EXISTS idx_user_profiles_email ON user_profiles(email)`;
 
