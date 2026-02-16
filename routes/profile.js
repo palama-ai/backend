@@ -97,17 +97,32 @@ router.put('/:userId', async (req, res) => {
     const existingRole = userResult && userResult.length > 0 ? userResult[0].role : 'user';
 
     await sql`
-      INSERT INTO user_profiles (id, email, full_name, role, referral_code, brand_name, website, bio, avatar_url, banner_url, website_icon, updated_at)
-      VALUES (${auth.id}, ${updates.email || auth.email}, ${updates.full_name || updates.fullName || null}, ${existingRole}, ${referralCode}, ${updates.brand_name || null}, ${updates.website || null}, ${updates.bio || null}, ${updates.avatar_url || null}, ${updates.banner_url || null}, ${updates.website_icon || null}, NOW())
+      INSERT INTO user_profiles (id, email, full_name, role, referral_code, brand_name, website, bio, avatar_url, banner_url, website_icon, push_token, updated_at)
+      VALUES (
+        ${auth.id}, 
+        ${updates.email || auth.email}, 
+        ${updates.full_name || updates.fullName || null}, 
+        ${existingRole}, 
+        ${referralCode}, 
+        ${updates.brand_name || null}, 
+        ${updates.website || null}, 
+        ${updates.bio || null}, 
+        ${updates.avatar_url || null}, 
+        ${updates.banner_url || null}, 
+        ${updates.website_icon || null},
+        ${updates.push_token || null},
+        NOW()
+      )
       ON CONFLICT (id) DO UPDATE SET 
-        email = COALESCE(${updates.email}, user_profiles.email), 
-        full_name = COALESCE(${updates.full_name || updates.fullName}, user_profiles.full_name), 
-        brand_name = COALESCE(${updates.brand_name}, user_profiles.brand_name),
-        website = COALESCE(${updates.website}, user_profiles.website),
-        bio = COALESCE(${updates.bio}, user_profiles.bio),
-        avatar_url = COALESCE(${updates.avatar_url}, user_profiles.avatar_url),
-        banner_url = COALESCE(${updates.banner_url}, user_profiles.banner_url),
-        website_icon = COALESCE(${updates.website_icon}, user_profiles.website_icon),
+        email = COALESCE(${updates.email || null}, user_profiles.email), 
+        full_name = COALESCE(${updates.full_name || updates.fullName || null}, user_profiles.full_name), 
+        brand_name = COALESCE(${updates.brand_name || null}, user_profiles.brand_name),
+        website = COALESCE(${updates.website || null}, user_profiles.website),
+        bio = COALESCE(${updates.bio || null}, user_profiles.bio),
+        avatar_url = COALESCE(${updates.avatar_url || null}, user_profiles.avatar_url),
+        banner_url = COALESCE(${updates.banner_url || null}, user_profiles.banner_url),
+        website_icon = COALESCE(${updates.website_icon || null}, user_profiles.website_icon),
+        push_token = COALESCE(${updates.push_token || null}, user_profiles.push_token),
         updated_at = NOW()
     `;
 
