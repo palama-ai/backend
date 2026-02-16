@@ -85,8 +85,7 @@ app.use((req, res, next) => {
 
 // Configure CORS properly
 const allowedOrigins = [
-  process.env.FRONTEND_URL || 'https://glowimatch.vercel.app',
-  'https://glowimatch.vercel.app',
+  process.env.FRONTEND_URL || 'https://glowimatch.com',
 ];
 
 // SECURITY: Log requests with null origin but don't block (mobile apps, health checks need this)
