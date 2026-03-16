@@ -1222,4 +1222,44 @@ router.post('/database/seed', requireAdmin, async (req, res) => {
   }
 });
 
+// ============================================
+// AGENT 2 — Re-verification Scheduler
+// ============================================
+const { runDeepVerification } = require('../lib/agent2');
+
+/**
+ * POST /api/admin/reverify-products
+ * Re-verify all products whose verification_date is older than 30 days.
+ * Kicks off background jobs with 2-second staggered delays.
+ */
+router.post('/reverify-products', requireAdmin, async (req, res) => {
+  try {
+    console.log('[admin] Re-verification requested by', req.admin?.id);
+
+    const staleProducts = await sql`
+      SELECT id, name, brand FROM seller_products
+      WHERE published = 1
+        AND (verification_date < NOW() - INTERVAL '30 days' OR verification_date IS NULL)
+      ORDER BY verification_date ASC NULLS FIRST
+    `;
+
+    const count = staleProducts.length;
+    console.log(`[admin] Found ${count} products due for re-verification`);
+
+    // Kick off background verifications with staggered delays
+    staleProducts.forEach((product, index) => {
+      setTimeout(() => {
+        runDeepVerification(product.id).catch(err =>
+          console.error(`[Agent2] Re-verification failed for ${product.id}:`, err?.message)
+        );
+      }, index * 2000); // 2-second delay between each
+    });
+
+    res.json({ data: { queued: count, message: `${count} products queued for re-verification` } });
+  } catch (e) {
+    console.error('[admin] reverify-products error:', e);
+    res.status(500).json({ error: 'Failed to queue re-verification' });
+  }
+});
+
 module.exports = router;
