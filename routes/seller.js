@@ -5,6 +5,7 @@ const { v4: uuidv4 } = require('uuid');
 const { sql } = require('../db');
 const { immediateCheck } = require('../lib/ingredientScanner');
 const { applyPenalty, getAccountStatus, getViolationHistory, submitAppeal } = require('../lib/penaltyService');
+const { runDeepVerification } = require('../lib/agent2');
 
 const JWT_SECRET = process.env.GLOWMATCH_JWT_SECRET;
 if (!JWT_SECRET) {
@@ -240,6 +241,11 @@ router.post('/products', requireSeller, async (req, res) => {
             response.data.message = `Product created with ${safetyCheck.warnings.length} warning(s)`;
         }
 
+        // Agent 2: Trigger background deep verification (non-blocking)
+        runDeepVerification(id).catch(err =>
+            console.error('[Agent2] Background verification failed:', err?.message)
+        );
+
         res.json(response);
     } catch (err) {
         console.error('[seller] Error creating product:', err);
@@ -278,6 +284,11 @@ router.put('/products/:id', requireSeller, async (req, res) => {
         updated_at = NOW()
       WHERE id = ${id} AND seller_id = ${req.user.id}
     `;
+
+        // Agent 2: Re-verify product after update (non-blocking)
+        runDeepVerification(id).catch(err =>
+            console.error('[Agent2] Background re-verification failed:', err?.message)
+        );
 
         res.json({ data: { message: 'Product updated successfully' } });
     } catch (err) {
