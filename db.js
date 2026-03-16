@@ -106,41 +106,14 @@ async function init() {
     console.log('[db] Created/verified user_profiles table');
 
     // Add missing columns for existing tables (migration)
-    // Add missing columns for existing tables (migration) - SPLIT for robustness
     try {
       await sqlClient`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS brand_name VARCHAR(255)`;
-      console.log('[db] Verified column: brand_name');
-    } catch (e) { console.log('[db] brand_name migration skipped:', e.message); }
-
-    try {
       await sqlClient`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS website VARCHAR(500)`;
-      console.log('[db] Verified column: website');
-    } catch (e) { console.log('[db] website migration skipped:', e.message); }
-
-    try {
       await sqlClient`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS bio TEXT`;
-      console.log('[db] Verified column: bio');
-    } catch (e) { console.log('[db] bio migration skipped:', e.message); }
-
-    try {
-      await sqlClient`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS banner_url TEXT`;
-      console.log('[db] Verified column: banner_url');
-    } catch (e) { console.log('[db] banner_url migration skipped:', e.message); }
-
-    try {
-      await sqlClient`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS website_icon VARCHAR(50)`;
-      console.log('[db] Verified column: website_icon');
-    } catch (e) { console.log('[db] website_icon migration skipped:', e.message); }
-
-    try {
-      await sqlClient`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS push_token VARCHAR(255)`;
-      console.log('[db] Verified column: push_token');
-    } catch (e) { console.log('[db] push_token migration skipped:', e.message); }
-
-    try {
-      await sqlClient`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS avatar_url TEXT`;
-      console.log('[db] Verified column: avatar_url');
-    } catch (e) { console.log('[db] avatar_url migration skipped:', e.message); }
+      console.log('[db] Added/verified seller columns in user_profiles');
+    } catch (e) {
+      console.log('[db] Seller columns migration skipped:', e.message);
+    }
 
     await sqlClient`CREATE INDEX IF NOT EXISTS idx_user_profiles_email ON user_profiles(email)`;
 
@@ -425,53 +398,6 @@ async function init() {
 
     await sqlClient`CREATE INDEX IF NOT EXISTS idx_comment_likes_comment_id ON comment_likes(comment_id)`;
 
-    // Followers system
-    await sqlClient`
-      CREATE TABLE IF NOT EXISTS followers (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        follower_id UUID REFERENCES users(id) ON DELETE CASCADE,
-        following_id UUID REFERENCES users(id) ON DELETE CASCADE,
-        created_at TIMESTAMP DEFAULT NOW(),
-        UNIQUE(follower_id, following_id)
-      )
-    `;
-    console.log('[db] Created/verified followers table');
-
-    await sqlClient`CREATE INDEX IF NOT EXISTS idx_followers_follower_id ON followers(follower_id)`;
-    await sqlClient`CREATE INDEX IF NOT EXISTS idx_followers_following_id ON followers(following_id)`;
-
-    // Product Likes System
-    await sqlClient`
-      CREATE TABLE IF NOT EXISTS product_likes (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        product_id UUID REFERENCES seller_products(id) ON DELETE CASCADE,
-        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-        created_at TIMESTAMP DEFAULT NOW(),
-        UNIQUE(product_id, user_id)
-      )
-    `;
-    console.log('[db] Created/verified product_likes table');
-
-    await sqlClient`CREATE INDEX IF NOT EXISTS idx_product_likes_product_id ON product_likes(product_id)`;
-    await sqlClient`CREATE INDEX IF NOT EXISTS idx_product_likes_user_id ON product_likes(user_id)`;
-
-    // Migrations: Add likes_count to seller_products
-    try {
-      await sqlClient`ALTER TABLE seller_products ADD COLUMN IF NOT EXISTS likes_count INTEGER DEFAULT 0`;
-      console.log('[db] Added/verified likes_count in seller_products');
-    } catch (e) {
-      // Ignored
-    }
-
-    // Migrations: Add avatar_url to user_profiles
-    try {
-      await sqlClient`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS avatar_url TEXT`;
-      console.log('[db] Added/verified avatar_url in user_profiles');
-    } catch (e) {
-      // Ignored
-    }
-
-
     // ============================================
     // PRODUCT SAFETY & SELLER PENALTY SYSTEM
     // ============================================
@@ -584,6 +510,27 @@ async function init() {
       console.log('[db] Added/verified ingredients column in seller_products');
     } catch (e) {
       console.log('[db] Ingredients column migration skipped:', e.message?.substring(0, 50));
+    }
+
+    // ============================================
+    // AGENT 2 — Deep Product Verification Columns
+    // ============================================
+    try {
+      await sqlClient`ALTER TABLE seller_products ADD COLUMN IF NOT EXISTS verification_status VARCHAR(30) DEFAULT 'pending'`;
+      await sqlClient`ALTER TABLE seller_products ADD COLUMN IF NOT EXISTS verification_score INTEGER DEFAULT NULL`;
+      await sqlClient`ALTER TABLE seller_products ADD COLUMN IF NOT EXISTS verification_date TIMESTAMP DEFAULT NULL`;
+      await sqlClient`ALTER TABLE seller_products ADD COLUMN IF NOT EXISTS manufacturer_info TEXT DEFAULT NULL`;
+      await sqlClient`ALTER TABLE seller_products ADD COLUMN IF NOT EXISTS review_summary TEXT DEFAULT NULL`;
+      await sqlClient`ALTER TABLE seller_products ADD COLUMN IF NOT EXISTS sample_reviews TEXT DEFAULT NULL`;
+      await sqlClient`ALTER TABLE seller_products ADD COLUMN IF NOT EXISTS red_flags TEXT DEFAULT NULL`;
+      await sqlClient`ALTER TABLE seller_products ADD COLUMN IF NOT EXISTS visibility_score INTEGER DEFAULT 100`;
+      await sqlClient`ALTER TABLE seller_products ADD COLUMN IF NOT EXISTS recall_reason TEXT DEFAULT NULL`;
+      await sqlClient`ALTER TABLE seller_products ADD COLUMN IF NOT EXISTS recall_source TEXT DEFAULT NULL`;
+      await sqlClient`ALTER TABLE seller_products ADD COLUMN IF NOT EXISTS hidden_by VARCHAR(50) DEFAULT NULL`;
+      await sqlClient`ALTER TABLE seller_products ADD COLUMN IF NOT EXISTS hidden_at TIMESTAMP DEFAULT NULL`;
+      console.log('[db] Added/verified Agent 2 verification columns in seller_products');
+    } catch (e) {
+      console.log('[db] Agent 2 columns migration skipped:', e.message?.substring(0, 50));
     }
 
     // Seed initial toxic ingredients if table is empty
