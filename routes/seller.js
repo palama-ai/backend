@@ -437,13 +437,14 @@ router.post('/appeals', requireSeller, async (req, res) => {
 // AI Chatbot for adding products
 router.post('/ai-chat', requireSeller, async (req, res) => {
     try {
-        const { message, history, image } = req.body;
+        const { message, history, image, currentState } = req.body;
         
         // message: text from user
         // history: array of previous messages
         // image: base64 encoded image (optional)
+        // currentState: previously extracted product data from the frontend
 
-        const result = await processConversation(history || [], message, image);
+        const result = await processConversation(history || [], message, image, currentState);
         res.json({ success: true, ...result });
 
     } catch (err) {
