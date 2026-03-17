@@ -475,7 +475,11 @@ router.post('/ai-confirm-add', requireSeller, async (req, res) => {
         }
 
         // Phase 1: Immediate safety check
+        console.log('[seller-ai] Confirming product addition for:', req.user.email);
+        console.log('[seller-ai] Product Data:', JSON.stringify(productData, null, 2));
+
         const safetyCheck = await immediateCheck(productData.ingredients, productData.name, productData.description);
+        console.log('[seller-ai] Safety Check Result:', JSON.stringify(safetyCheck, null, 2));
 
         if (!safetyCheck.safe) {
             // Apply penalty
@@ -499,15 +503,17 @@ router.post('/ai-confirm-add', requireSeller, async (req, res) => {
         await sql`
             INSERT INTO seller_products (
                 id, seller_id, name, brand, description, price, 
-                image_url, category, ingredients, purchase_url, published
+                image_url, category, ingredients, purchase_url, barcode, published
             )
             VALUES (
                 ${id}, ${req.user.id}, ${productData.name}, ${productData.brand || null}, 
                 ${productData.description || null}, ${productData.price || null}, 
                 ${productData.image_url || null}, ${productData.category || null}, 
-                ${productData.ingredients}, ${productData.purchase_url || null}, 1
+                ${productData.ingredients}, ${productData.purchase_url || null}, 
+                ${productData.barcode || null}, 1
             )
         `;
+        console.log('[seller-ai] Product inserted successfully:', id);
 
         // Trigger Agent 2
         runDeepVerification(id).catch(err => console.error('[Agent2] Background verification failed:', err.message));
