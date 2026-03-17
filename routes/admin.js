@@ -1222,29 +1222,68 @@ router.post('/database/seed', requireAdmin, async (req, res) => {
   }
 });
 
-// ============================================
-// AGENT 2 — Re-verification Scheduler
-// ============================================
-const { runDeepVerification } = require('../lib/agent2');
+// --- 16. Agent 2 Verification Tools ---
+
+/**
+ * GET /api/admin/verification/stats
+ * Returns summary of verification statuses
+ */
+router.get('/verification/stats', requireAdmin, async (req, res) => {
+  try {
+    const stats = await sql`
+      SELECT 
+        verification_status,
+        COUNT(*) as count,
+        AVG(verification_score) as avg_score
+      FROM seller_products
+      WHERE published = 1
+      GROUP BY verification_status
+    `;
+    
+    // Total count
+    const total = await sql`SELECT COUNT(*) FROM seller_products WHERE published = 1`;
+    
+    res.json({ 
+      data: { 
+        stats: stats.map(s => ({ ...s, count: parseInt(s.count) })), 
+        total: parseInt(total[0].count),
+        timestamp: new Date()
+      } 
+    });
+  } catch (e) {
+    console.error('[admin] verification/stats error:', e);
+    res.status(500).json({ error: 'Failed to fetch verification stats' });
+  }
+});
 
 /**
  * POST /api/admin/reverify-products
- * Re-verify all products whose verification_date is older than 30 days.
- * Kicks off background jobs with 2-second staggered delays.
+ * Queues products for deep verification by Agent 2
+ * Supports forceAll: true to re-verify everything
  */
 router.post('/reverify-products', requireAdmin, async (req, res) => {
   try {
-    console.log('[admin] Re-verification requested by', req.admin?.id);
+    const { forceAll } = req.body;
+    console.log('[admin] Re-verification requested. forceAll:', !!forceAll);
 
-    const staleProducts = await sql`
-      SELECT id, name, brand FROM seller_products
-      WHERE published = 1
-        AND (verification_date < NOW() - INTERVAL '30 days' OR verification_date IS NULL)
-      ORDER BY verification_date ASC NULLS FIRST
-    `;
+    let staleProducts;
+    if (forceAll) {
+      staleProducts = await sql`
+        SELECT id FROM seller_products 
+        WHERE published = 1
+        ORDER BY verification_date ASC NULLS FIRST
+      `;
+    } else {
+      staleProducts = await sql`
+        SELECT id FROM seller_products 
+        WHERE published = 1
+          AND (verification_date < NOW() - INTERVAL '30 days' OR verification_date IS NULL)
+        ORDER BY verification_date ASC NULLS FIRST
+      `;
+    }
 
     const count = staleProducts.length;
-    console.log(`[admin] Found ${count} products due for re-verification`);
+    console.log(`[admin] Queuing ${count} products for re-verification`);
 
     // Kick off background verifications with staggered delays
     staleProducts.forEach((product, index) => {
@@ -1252,10 +1291,15 @@ router.post('/reverify-products', requireAdmin, async (req, res) => {
         runDeepVerification(product.id).catch(err =>
           console.error(`[Agent2] Re-verification failed for ${product.id}:`, err?.message)
         );
-      }, index * 10000); // 10-second delay between each (sequential Brave Search takes ~5s per product)
+      }, index * 10000); // 10-second delay between each
     });
 
-    res.json({ data: { queued: count, message: `${count} products queued for re-verification` } });
+    res.json({ 
+      data: { 
+        queued: count, 
+        message: `${count} products queued for re-verification. This will take approximately ${Math.round(count * 10 / 60)} minutes.` 
+      } 
+    });
   } catch (e) {
     console.error('[admin] reverify-products error:', e);
     res.status(500).json({ error: 'Failed to queue re-verification' });
