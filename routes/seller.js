@@ -6,6 +6,7 @@ const { sql } = require('../db');
 const { immediateCheck } = require('../lib/ingredientScanner');
 const { applyPenalty, getAccountStatus, getViolationHistory, submitAppeal } = require('../lib/penaltyService');
 const { runDeepVerification } = require('../lib/agent2');
+const { processConversation } = require('../lib/sellerAgent');
 
 const JWT_SECRET = process.env.GLOWMATCH_JWT_SECRET;
 if (!JWT_SECRET) {
@@ -430,6 +431,82 @@ router.post('/appeals', requireSeller, async (req, res) => {
     } catch (err) {
         console.error('[seller] Error submitting appeal:', err);
         res.status(500).json({ error: 'Failed to submit appeal' });
+    }
+});
+
+// AI Chatbot for adding products
+router.post('/ai-chat', requireSeller, async (req, res) => {
+    try {
+        const { message, history, image } = req.body;
+        
+        // message: text from user
+        // history: array of previous messages
+        // image: base64 encoded image (optional)
+
+        const result = await processConversation(history || [], message, image);
+        res.json({ success: true, ...result });
+
+    } catch (err) {
+        console.error('[seller-ai] Chat error:', err);
+        res.status(500).json({ error: 'AI agent failed to respond', message: err.message });
+    }
+});
+
+// Final confirmation to add product via AI
+router.post('/ai-confirm-add', requireSeller, async (req, res) => {
+    try {
+        const { productData } = req.body;
+
+        if (!productData || !productData.name || !productData.ingredients) {
+            return res.status(400).json({ error: 'Missing required product data' });
+        }
+
+        // Phase 1: Immediate safety check
+        const safetyCheck = await immediateCheck(productData.ingredients, productData.name, productData.description);
+
+        if (!safetyCheck.safe) {
+            // Apply penalty
+            const penaltyResult = await applyPenalty(
+                req.user.id,
+                null,
+                productData.name,
+                safetyCheck.flaggedIngredients,
+                'toxic_ingredient'
+            );
+
+            return res.status(400).json({
+                error: 'Product rejected due to harmful ingredients',
+                code: 'TOXIC_INGREDIENTS_DETECTED',
+                flaggedIngredients: safetyCheck.flaggedIngredients,
+                penalty: penaltyResult
+            });
+        }
+
+        const id = uuidv4();
+        await sql`
+            INSERT INTO seller_products (
+                id, seller_id, name, brand, description, price, 
+                image_url, category, ingredients, purchase_url, published
+            )
+            VALUES (
+                ${id}, ${req.user.id}, ${productData.name}, ${productData.brand || null}, 
+                ${productData.description || null}, ${productData.price || null}, 
+                ${productData.image_url || null}, ${productData.category || null}, 
+                ${productData.ingredients}, ${productData.purchase_url || null}, 1
+            )
+        `;
+
+        // Trigger Agent 2
+        runDeepVerification(id).catch(err => console.error('[Agent2] Background verification failed:', err.message));
+
+        res.json({
+            success: true,
+            data: { id, message: 'Product added successfully via AI Assistant' }
+        });
+
+    } catch (err) {
+        console.error('[seller-ai] Confirm add error:', err);
+        res.status(500).json({ error: 'Failed to save product', message: err.message });
     }
 });
 
