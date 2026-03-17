@@ -461,6 +461,19 @@ router.post('/ai-confirm-add', requireSeller, async (req, res) => {
             return res.status(400).json({ error: 'Missing required product data' });
         }
 
+        // Sanitize price (convert string like "$10.00" or "10-20" to number)
+        if (productData.price) {
+            if (typeof productData.price === 'string') {
+                const numericPrice = productData.price.replace(/[^0-9.]/g, '');
+                productData.price = parseFloat(numericPrice) || null;
+            }
+        }
+
+        // Sanitize barcode
+        if (productData.barcode && typeof productData.barcode !== 'string') {
+            productData.barcode = String(productData.barcode);
+        }
+
         // Phase 1: Immediate safety check
         const safetyCheck = await immediateCheck(productData.ingredients, productData.name, productData.description);
 
