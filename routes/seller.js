@@ -434,6 +434,41 @@ router.post('/appeals', requireSeller, async (req, res) => {
     }
 });
 
+// Test endpoint: verify Perplexity discovery works on Vercel (PUBLIC - for debugging only)
+// Usage: GET /api/seller/test-discovery?name=CeraVe+Moisturizer&brand=CeraVe
+router.get('/test-discovery', async (req, res) => {
+    try {
+        const { name = 'CeraVe Moisturizing Cream', brand = 'CeraVe' } = req.query;
+        const apiKeyPresent = !!process.env.PERPLEXITY_API_KEY;
+        const groqKeyPresent = !!process.env.GROQ_API_KEY;
+        
+        console.log('[seller-test] Testing discovery. PERPLEXITY_API_KEY present:', apiKeyPresent);
+        
+        if (!apiKeyPresent) {
+            return res.json({ 
+                success: false, 
+                apiKeyPresent: false,
+                groqKeyPresent,
+                error: 'PERPLEXITY_API_KEY is not set in Vercel environment variables!'
+            });
+        }
+        
+        const { discoverProductDetails } = require('../lib/sellerAgent');
+        const result = await discoverProductDetails(name, brand);
+        
+        res.json({ 
+            success: true, 
+            apiKeyPresent,
+            groqKeyPresent,
+            query: { name, brand },
+            result 
+        });
+    } catch (err) {
+        console.error('[seller-test] Discovery test failed:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // AI Chatbot for adding products
 router.post('/ai-chat', requireSeller, async (req, res) => {
     try {
