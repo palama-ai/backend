@@ -1252,7 +1252,7 @@ router.post('/reverify-products', requireAdmin, async (req, res) => {
         runDeepVerification(product.id).catch(err =>
           console.error(`[Agent2] Re-verification failed for ${product.id}:`, err?.message)
         );
-      }, index * 2000); // 2-second delay between each
+      }, index * 10000); // 10-second delay between each (sequential Brave Search takes ~5s per product)
     });
 
     res.json({ data: { queued: count, message: `${count} products queued for re-verification` } });
