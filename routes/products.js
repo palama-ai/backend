@@ -47,9 +47,12 @@ router.post('/ai-recommend', async (req, res) => {
             SELECT 
                 id, seller_id, name, brand, description, 
                 price, original_price, image_url, category,
-                skin_types, concerns, purchase_url, view_count
+                skin_types, concerns, purchase_url, view_count,
+                verification_status, verification_score, visibility_score,
+                review_summary, sample_reviews, manufacturer_info
             FROM seller_products 
             WHERE published = 1
+              AND verification_status IS DISTINCT FROM 'recalled_hidden'
             ORDER BY view_count DESC, created_at DESC
             LIMIT 30
         `;
