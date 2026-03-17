@@ -208,9 +208,58 @@ CREATE TABLE IF NOT EXISTS contact_messages (
 CREATE INDEX idx_contact_created_at ON contact_messages(created_at);
 CREATE INDEX idx_contact_read ON contact_messages(read);
 
--- Grant appropriate permissions
--- Note: Update these usernames based on your Neon PostgreSQL setup
--- GRANT CONNECT ON DATABASE your_database TO your_user;
--- GRANT USAGE ON SCHEMA public TO your_user;
--- GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO your_user;
--- GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO your_user;
+-- Seller products table
+CREATE TABLE IF NOT EXISTS seller_products (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  seller_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  name VARCHAR(255) NOT NULL,
+  brand VARCHAR(255),
+  description TEXT,
+  price DECIMAL(10,2),
+  original_price DECIMAL(10,2),
+  image_url TEXT,
+  category VARCHAR(100),
+  skin_types TEXT,
+  concerns TEXT,
+  purchase_url TEXT,
+  barcode VARCHAR(255),
+  ingredients TEXT,
+  published INTEGER DEFAULT 0,
+  view_count INTEGER DEFAULT 0,
+  verification_status VARCHAR(30) DEFAULT 'pending',
+  verification_score INTEGER,
+  verification_date TIMESTAMP,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_seller_products_seller_id ON seller_products(seller_id);
+CREATE INDEX idx_seller_products_category ON seller_products(category);
+CREATE INDEX idx_seller_products_published ON seller_products(published);
+
+-- Toxic ingredients blacklist table
+CREATE TABLE IF NOT EXISTS toxic_ingredients (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name VARCHAR(255) NOT NULL,
+  aliases TEXT,
+  severity VARCHAR(20) DEFAULT 'medium',
+  reason TEXT,
+  source VARCHAR(100),
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_toxic_ingredients_name ON toxic_ingredients(name);
+
+-- Seller violations log
+CREATE TABLE IF NOT EXISTS seller_violations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  seller_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  product_id UUID,
+  product_name VARCHAR(255),
+  violation_type VARCHAR(50),
+  detected_ingredients TEXT,
+  penalty_applied VARCHAR(20),
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_seller_violations_seller_id ON seller_violations(seller_id);
