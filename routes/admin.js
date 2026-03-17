@@ -5,7 +5,6 @@ const { v4: uuidv4 } = require('uuid');
 const { sql } = require('../db');
 const { runDeepVerification } = require('../lib/agent2');
 
-
 const JWT_SECRET = process.env.GLOWMATCH_JWT_SECRET;
 if (!JWT_SECRET) {
   console.error('[SECURITY] CRITICAL: GLOWMATCH_JWT_SECRET environment variable is not set!');
@@ -1293,13 +1292,13 @@ router.post('/reverify-products', requireAdmin, async (req, res) => {
         runDeepVerification(product.id).catch(err =>
           console.error(`[Agent2] Re-verification failed for ${product.id}:`, err?.message)
         );
-      }, index * 10000); // 10-second delay between each
+      }, index * 5000); // 5-second delay between each
     });
 
     res.json({ 
       data: { 
         queued: count, 
-        message: `${count} products queued for re-verification. This will take approximately ${Math.round(count * 10 / 60)} minutes.` 
+        message: `${count} products queued for re-verification. This will take approximately ${Math.round(count * 5 / 60)} minutes.` 
       } 
     });
   } catch (e) {
