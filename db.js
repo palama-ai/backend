@@ -301,6 +301,7 @@ async function init() {
         skin_types TEXT,
         concerns TEXT,
         purchase_url TEXT,
+        barcode VARCHAR(255),
         published INTEGER DEFAULT 0,
         view_count INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT NOW(),
@@ -504,12 +505,13 @@ async function init() {
     await sqlClient`CREATE INDEX IF NOT EXISTS idx_seller_appeals_seller_id ON seller_appeals(seller_id)`;
     await sqlClient`CREATE INDEX IF NOT EXISTS idx_seller_appeals_status ON seller_appeals(status)`;
 
-    // Add ingredients column to seller_products if not exists
+    // Add ingredients and barcode columns to seller_products if not exists
     try {
       await sqlClient`ALTER TABLE seller_products ADD COLUMN IF NOT EXISTS ingredients TEXT`;
-      console.log('[db] Added/verified ingredients column in seller_products');
+      await sqlClient`ALTER TABLE seller_products ADD COLUMN IF NOT EXISTS barcode VARCHAR(255)`;
+      console.log('[db] Added/verified ingredients and barcode columns in seller_products');
     } catch (e) {
-      console.log('[db] Ingredients column migration skipped:', e.message?.substring(0, 50));
+      console.log('[db] seller_products migration skipped:', e.message?.substring(0, 50));
     }
 
     // ============================================
