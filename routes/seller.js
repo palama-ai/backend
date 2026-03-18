@@ -479,6 +479,59 @@ router.post('/ai-chat', requireSeller, async (req, res) => {
         // currentState: previously extracted product data from the frontend
 
         const result = await processConversation(history || [], message, image, currentState);
+        
+        // --- Special Background Action: FIX_IMAGES ---
+        if (result.action === 'FIX_IMAGES') {
+            const { discoverProductDetails } = require('../lib/sellerAgent');
+            
+            // Asynchronous background task (don't await to avoid timeout)
+            (async () => {
+                console.log(`[seller-ai] Starting background image repair for seller ${req.user.id}...`);
+                try {
+                    // Find products for this seller with missing or invalid images
+                    const missingImageProducts = await sql`
+                        SELECT id, name, brand 
+                        FROM seller_products 
+                        WHERE seller_id = ${req.user.id} 
+                          AND (image_url IS NULL OR image_url = '' OR image_url NOT LIKE 'http%')
+                    `;
+                    
+                    if (!missingImageProducts || missingImageProducts.length === 0) {
+                        console.log(`[seller-ai] No products with missing images found for seller ${req.user.id}`);
+                        return;
+                    }
+
+                    let fixedCount = 0;
+                    for (const product of missingImageProducts) {
+                        console.log(`[seller-ai] Repairing image for: ${product.name}`);
+                        
+                        // Discover new images via Perplexity
+                        const details = await discoverProductDetails(product.name, product.brand);
+                        
+                        // If new images were found, update the database
+                        if (details.image_urls && details.image_urls.length > 0) {
+                            const newImage = details.image_urls[0];
+                            await sql`
+                                UPDATE seller_products 
+                                SET image_url = ${newImage} 
+                                WHERE id = ${product.id}
+                            `;
+                            fixedCount++;
+                        }
+                        
+                        // Add a small delay between requests to avoid rate limits
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                    }
+                    console.log(`[seller-ai] Image repair complete for seller ${req.user.id}. Fixed ${fixedCount}/${missingImageProducts.length} products.`);
+                } catch (err) {
+                    console.error('[seller-ai] Background image repair failed:', err);
+                }
+            })();
+            
+            // Override the AI's reply to give immediate feedback to the seller
+            result.reply = "حسناً! لقد بدأت بالبحث عن منتجاتك التي لا تحتوي على صور. سأقوم بإصلاحها فوراً في الخلفية. قد يستغرق هذا بضع دقائق حسب عدد المنتجات، يرجى تحديث صفحة منتجاتك لاحقاً للاطلاع على النتيجة. 🖼️✨";
+        }
+
         res.json({ success: true, ...result });
 
     } catch (err) {
