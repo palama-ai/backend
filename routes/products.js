@@ -54,6 +54,7 @@ router.post('/ai-recommend', async (req, res) => {
             WHERE published = 1
               AND verification_status IS DISTINCT FROM 'recalled_hidden'
               AND verification_status IS DISTINCT FROM 'flagged'
+              AND verification_status IS DISTINCT FROM 'unverified'
             ORDER BY COALESCE(visibility_score, 100) DESC, view_count DESC, created_at DESC
             LIMIT 30
         `;
@@ -153,6 +154,7 @@ router.get('/recommended', async (req, res) => {
             WHERE published = 1
               AND verification_status IS DISTINCT FROM 'recalled_hidden'
               AND verification_status IS DISTINCT FROM 'flagged'
+              AND verification_status IS DISTINCT FROM 'unverified'
             ORDER BY COALESCE(visibility_score, 100) DESC, COALESCE(view_count, 0) DESC, created_at DESC
         `;
 
@@ -328,7 +330,11 @@ router.get('/:id', async (req, res) => {
                 u.full_name as seller_name
             FROM seller_products sp
             LEFT JOIN users u ON u.id = sp.seller_id
-            WHERE sp.id = ${id} AND sp.published = 1
+            WHERE sp.id = ${id} 
+              AND sp.published = 1
+              AND sp.verification_status IS DISTINCT FROM 'recalled_hidden'
+              AND sp.verification_status IS DISTINCT FROM 'flagged'
+              AND sp.verification_status IS DISTINCT FROM 'unverified'
         `;
 
         if (!products || products.length === 0) {
