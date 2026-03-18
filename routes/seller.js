@@ -471,15 +471,23 @@ router.get('/test-discovery', requireSeller, async (req, res) => {
 // AI Chatbot for adding products
 router.post('/ai-chat', requireSeller, async (req, res) => {
     try {
-        const { message, history, image, currentState } = req.body;
+        const { message, history, image, currentState, settings } = req.body;
+        const webAccess = settings?.webAccess !== false; // default true
+        const canMakeChanges = settings?.canMakeChanges !== false; // default true
         
         // message: text from user
         // history: array of previous messages
         // image: base64 encoded image (optional)
         // currentState: previously extracted product data from the frontend
 
-        const result = await processConversation(history || [], message, image, currentState);
+        const result = await processConversation(history || [], message, image, currentState, { webAccess });
         
+        // --- Block mutating actions when canMakeChanges is OFF ---
+        if (!canMakeChanges && (result.action === 'EXECUTE_SAVE' || result.action === 'FIX_IMAGES')) {
+            result.action = 'CHAT';
+            result.reply = '⚠️ "Can make changes" is turned off. Enable it from the options menu to allow me to modify your products.';
+        }
+
         // --- Special Background Action: FIX_IMAGES ---
         if (result.action === 'FIX_IMAGES') {
             // We no longer do the background task here. The frontend will orchestrate it 
