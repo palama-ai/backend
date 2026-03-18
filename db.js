@@ -563,6 +563,18 @@ async function init() {
         created_at TIMESTAMP DEFAULT NOW()
       )
     `;
+    
+    // Explicit ALTER TABLE to fix schema if table already existed without these columns
+    try {
+      await sqlClient`ALTER TABLE seller_ai_messages ADD COLUMN IF NOT EXISTS session_id UUID REFERENCES seller_ai_sessions(id) ON DELETE CASCADE`;
+      await sqlClient`ALTER TABLE seller_ai_messages ADD COLUMN IF NOT EXISTS role VARCHAR(20)`;
+      await sqlClient`ALTER TABLE seller_ai_messages ADD COLUMN IF NOT EXISTS content TEXT`;
+      await sqlClient`ALTER TABLE seller_ai_messages ADD COLUMN IF NOT EXISTS extracted_data TEXT`;
+      await sqlClient`ALTER TABLE seller_ai_messages ADD COLUMN IF NOT EXISTS image_url TEXT`;
+    } catch (e) {
+      console.log('[db] seller_ai_messages ALTER skipped:', e.message?.substring(0, 50));
+    }
+
     console.log('[db] Created/verified seller_ai_messages table');
 
     await sqlClient`CREATE INDEX IF NOT EXISTS idx_seller_ai_messages_session_id ON seller_ai_messages(session_id)`;
