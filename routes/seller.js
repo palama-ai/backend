@@ -474,13 +474,14 @@ router.post('/ai-chat', requireSeller, async (req, res) => {
         const { message, history, image, currentState, settings } = req.body;
         const webAccess = settings?.webAccess !== false; // default true
         const canMakeChanges = settings?.canMakeChanges !== false; // default true
+        const model = settings?.model || 'auto';
         
         // message: text from user
         // history: array of previous messages
         // image: base64 encoded image (optional)
         // currentState: previously extracted product data from the frontend
 
-        const result = await processConversation(history || [], message, image, currentState, { webAccess });
+        const result = await processConversation(history || [], message, image, currentState, { webAccess, model });
         
         // --- Block mutating actions when canMakeChanges is OFF ---
         if (!canMakeChanges && (result.action === 'EXECUTE_SAVE' || result.action === 'FIX_IMAGES')) {
