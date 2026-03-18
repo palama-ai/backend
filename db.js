@@ -535,6 +535,56 @@ async function init() {
       console.log('[db] Agent 2 columns migration skipped:', e.message?.substring(0, 50));
     }
 
+    // ============================================
+    // AI Chat History
+    // ============================================
+    await sqlClient`
+      CREATE TABLE IF NOT EXISTS seller_ai_sessions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        seller_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        title VARCHAR(255),
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `;
+    console.log('[db] Created/verified seller_ai_sessions table');
+
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_seller_ai_sessions_seller_id ON seller_ai_sessions(seller_id)`;
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_seller_ai_sessions_updated_at ON seller_ai_sessions(updated_at)`;
+
+    await sqlClient`
+      CREATE TABLE IF NOT EXISTS seller_ai_messages (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        session_id UUID REFERENCES seller_ai_sessions(id) ON DELETE CASCADE,
+        role VARCHAR(20) NOT NULL,
+        content TEXT,
+        extracted_data TEXT,
+        image_url TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `;
+    console.log('[db] Created/verified seller_ai_messages table');
+
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_seller_ai_messages_session_id ON seller_ai_messages(session_id)`;
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_seller_ai_messages_created_at ON seller_ai_messages(created_at)`;
+
+    // Toxic ingredients blacklist table
+    await sqlClient`
+      CREATE TABLE IF NOT EXISTS toxic_ingredients (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name VARCHAR(255) NOT NULL,
+        aliases TEXT,
+        severity VARCHAR(20) DEFAULT 'medium',
+        reason TEXT,
+        source VARCHAR(100),
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `;
+    console.log('[db] Created/verified toxic_ingredients table');
+
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_toxic_ingredients_name ON toxic_ingredients(name)`;
+    await sqlClient`CREATE INDEX IF NOT EXISTS idx_toxic_ingredients_severity ON toxic_ingredients(severity)`;
+
     // Seed initial toxic ingredients if table is empty
     try {
       const toxicCount = await sqlClient`SELECT COUNT(*) as count FROM toxic_ingredients`;
