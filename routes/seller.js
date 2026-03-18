@@ -583,20 +583,20 @@ router.post('/ai-chat', requireSeller, async (req, res) => {
         }
 
         if (result.action === 'FIX_IMAGES') {
-            result.reply = "حسناً! سأقوم الآن بالبحث عن منتجاتك التي لا تحتوي على صور. سأعمل عليها الآن أمامك... 🖼️✨";
+            result.reply = "Got it! I'm now searching for your products that are missing images. I'll work on them right here... 🖼️✨";
         } else if (result.action === 'MODIFY_PRODUCT') {
             const targetName = result.target_product_name;
             const updates = result.updates || {};
             
             if (!targetName || Object.keys(updates).length === 0) {
-                result.reply = "عذراً، لم أتمكن من تحديد تفاصيل التعديل بوضوح. يرجى إعادة توضيح المطلوب.";
+                result.reply = "Sorry, I couldn't clearly identify the update details. Please clarify what you'd like me to change.";
                 result.action = 'CHAT';
             } else {
                 // Find product by name
                 const products = await sql`SELECT * FROM seller_products WHERE seller_id = ${userId} AND name ILIKE ${'%' + targetName + '%'}`;
                 
                 if (products.length === 0) {
-                    result.reply = `عذراً، لم أعثر على أي منتج باسم "${targetName}" في متجرك.`;
+                    result.reply = `Sorry, I couldn't find any product named "${targetName}" in your store.`;
                     result.action = 'CHAT';
                 } else {
                     // Update the first matching product
@@ -623,7 +623,7 @@ router.post('/ai-chat', requireSeller, async (req, res) => {
                     `;
                     
                     const updatedFields = Object.keys(updates).join(', ');
-                    result.reply = `تم بنجاح حفظ التعديلات (${updatedFields}) للمنتج: ${newName} ✅`;
+                    result.reply = `Successfully saved changes (${updatedFields}) for product: ${newName} ✅`;
                 }
             }
         }
