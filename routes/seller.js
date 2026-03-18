@@ -434,9 +434,8 @@ router.post('/appeals', requireSeller, async (req, res) => {
     }
 });
 
-// Test endpoint: verify Perplexity discovery works on Vercel (PUBLIC - for debugging only)
-// Usage: GET /api/seller/test-discovery?name=CeraVe+Moisturizer&brand=CeraVe
-router.get('/test-discovery', async (req, res) => {
+// Test endpoint: verify Perplexity discovery works on Vercel (requires seller auth)
+router.get('/test-discovery', requireSeller, async (req, res) => {
     try {
         const { name = 'CeraVe Moisturizing Cream', brand = 'CeraVe' } = req.query;
         const apiKeyPresent = !!process.env.PERPLEXITY_API_KEY;
