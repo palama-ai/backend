@@ -53,7 +53,8 @@ router.post('/ai-recommend', async (req, res) => {
             FROM seller_products 
             WHERE published = 1
               AND verification_status IS DISTINCT FROM 'recalled_hidden'
-            ORDER BY view_count DESC, created_at DESC
+              AND verification_status IS DISTINCT FROM 'flagged'
+            ORDER BY COALESCE(visibility_score, 100) DESC, view_count DESC, created_at DESC
             LIMIT 30
         `;
 
@@ -151,7 +152,8 @@ router.get('/recommended', async (req, res) => {
             FROM seller_products 
             WHERE published = 1
               AND verification_status IS DISTINCT FROM 'recalled_hidden'
-            ORDER BY (COALESCE(visibility_score, 100) * 0.4 + COALESCE(view_count, 0) * 0.6) DESC, created_at DESC
+              AND verification_status IS DISTINCT FROM 'flagged'
+            ORDER BY COALESCE(visibility_score, 100) DESC, COALESCE(view_count, 0) DESC, created_at DESC
         `;
 
         // Score and filter products based on matching
