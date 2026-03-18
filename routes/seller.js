@@ -482,54 +482,9 @@ router.post('/ai-chat', requireSeller, async (req, res) => {
         
         // --- Special Background Action: FIX_IMAGES ---
         if (result.action === 'FIX_IMAGES') {
-            const { discoverProductDetails } = require('../lib/sellerAgent');
-            
-            // Asynchronous background task (don't await to avoid timeout)
-            (async () => {
-                console.log(`[seller-ai] Starting background image repair for seller ${req.user.id}...`);
-                try {
-                    // Find products for this seller with missing or invalid images
-                    const missingImageProducts = await sql`
-                        SELECT id, name, brand 
-                        FROM seller_products 
-                        WHERE seller_id = ${req.user.id} 
-                          AND (image_url IS NULL OR image_url = '' OR image_url NOT LIKE 'http%')
-                    `;
-                    
-                    if (!missingImageProducts || missingImageProducts.length === 0) {
-                        console.log(`[seller-ai] No products with missing images found for seller ${req.user.id}`);
-                        return;
-                    }
-
-                    let fixedCount = 0;
-                    for (const product of missingImageProducts) {
-                        console.log(`[seller-ai] Repairing image for: ${product.name}`);
-                        
-                        // Discover new images via Perplexity
-                        const details = await discoverProductDetails(product.name, product.brand);
-                        
-                        // If new images were found, update the database
-                        if (details.image_urls && details.image_urls.length > 0) {
-                            const newImage = details.image_urls[0];
-                            await sql`
-                                UPDATE seller_products 
-                                SET image_url = ${newImage} 
-                                WHERE id = ${product.id}
-                            `;
-                            fixedCount++;
-                        }
-                        
-                        // Add a small delay between requests to avoid rate limits
-                        await new Promise(resolve => setTimeout(resolve, 2000));
-                    }
-                    console.log(`[seller-ai] Image repair complete for seller ${req.user.id}. Fixed ${fixedCount}/${missingImageProducts.length} products.`);
-                } catch (err) {
-                    console.error('[seller-ai] Background image repair failed:', err);
-                }
-            })();
-            
-            // Override the AI's reply to give immediate feedback to the seller
-            result.reply = "حسناً! لقد بدأت بالبحث عن منتجاتك التي لا تحتوي على صور. سأقوم بإصلاحها فوراً في الخلفية. قد يستغرق هذا بضع دقائق حسب عدد المنتجات، يرجى تحديث صفحة منتجاتك لاحقاً للاطلاع على النتيجة. 🖼️✨";
+            // We no longer do the background task here. The frontend will orchestrate it 
+            // by calling /missing-images and /fix-image endpoints to show real-time progress.
+            result.reply = "حسناً! سأقوم الآن بالبحث عن منتجاتك التي لا تحتوي على صور. سأعمل عليها الآن أمامك... 🖼️✨";
         }
 
         res.json({ success: true, ...result });
@@ -614,6 +569,47 @@ router.post('/ai-confirm-add', requireSeller, async (req, res) => {
     } catch (err) {
         console.error('[seller-ai] Confirm add error:', err);
         res.status(500).json({ error: 'Failed to save product', message: err.message });
+    }
+});
+
+// GET products with missing images (For AI Real-time UI)
+router.get('/missing-images', requireSeller, async (req, res) => {
+    try {
+        const missingImageProducts = await sql`
+            SELECT id, name, brand 
+            FROM seller_products 
+            WHERE seller_id = ${req.user.id} 
+              AND (image_url IS NULL OR image_url = '' OR image_url NOT LIKE 'http%')
+        `;
+        res.json({ success: true, data: missingImageProducts || [] });
+    } catch (err) {
+        console.error('[seller-ai] Error fetching missing images:', err);
+        res.status(500).json({ error: 'Failed to fetch products' });
+    }
+});
+
+// POST fix a single product image (For AI Real-time UI)
+router.post('/fix-image', requireSeller, async (req, res) => {
+    try {
+        const { id, name, brand } = req.body;
+        if (!id || !name) return res.status(400).json({ error: 'Missing product ID or name' });
+
+        const { discoverProductDetails } = require('../lib/sellerAgent');
+        const details = await discoverProductDetails(name, brand);
+        
+        if (details.image_urls && details.image_urls.length > 0) {
+            const newImage = details.image_urls[0];
+            await sql`
+                UPDATE seller_products 
+                SET image_url = ${newImage} 
+                WHERE id = ${id} AND seller_id = ${req.user.id}
+            `;
+            return res.json({ success: true, fixed: true, url: newImage });
+        }
+        res.json({ success: true, fixed: false });
+    } catch (err) {
+        console.error('[seller-ai] Error fixing image:', err);
+        res.status(500).json({ error: 'Failed to fix image', message: err.message });
     }
 });
 
