@@ -577,13 +577,55 @@ router.post('/ai-chat', requireSeller, async (req, res) => {
         const result = await processConversation(history || [], message, image, currentState, { webAccess, model });
         
         // Block mutating actions when canMakeChanges is OFF
-        if (!canMakeChanges && (result.action === 'EXECUTE_SAVE' || result.action === 'FIX_IMAGES')) {
+        if (!canMakeChanges && (result.action === 'EXECUTE_SAVE' || result.action === 'FIX_IMAGES' || result.action === 'MODIFY_PRODUCT')) {
             result.action = 'CHAT';
             result.reply = '⚠️ "Can make changes" is turned off. Enable it from the options menu to allow me to modify your products.';
         }
 
         if (result.action === 'FIX_IMAGES') {
             result.reply = "حسناً! سأقوم الآن بالبحث عن منتجاتك التي لا تحتوي على صور. سأعمل عليها الآن أمامك... 🖼️✨";
+        } else if (result.action === 'MODIFY_PRODUCT') {
+            const targetName = result.target_product_name;
+            const updates = result.updates || {};
+            
+            if (!targetName || Object.keys(updates).length === 0) {
+                result.reply = "عذراً، لم أتمكن من تحديد تفاصيل التعديل بوضوح. يرجى إعادة توضيح المطلوب.";
+                result.action = 'CHAT';
+            } else {
+                // Find product by name
+                const products = await sql`SELECT * FROM seller_products WHERE seller_id = ${userId} AND name ILIKE ${'%' + targetName + '%'}`;
+                
+                if (products.length === 0) {
+                    result.reply = `عذراً، لم أعثر على أي منتج باسم "${targetName}" في متجرك.`;
+                    result.action = 'CHAT';
+                } else {
+                    // Update the first matching product
+                    const existingProduct = products[0];
+                    const p = updates;
+                    
+                    const priceUpdate = p.price !== undefined ? (typeof p.price === 'string' ? parseFloat(p.price.replace(/[^0-9.]/g, '')) : p.price) : undefined;
+                    
+                    const newName = p.name !== undefined ? p.name : existingProduct.name;
+                    const newDesc = p.description !== undefined ? p.description : existingProduct.description;
+                    const newPrice = priceUpdate !== undefined ? priceUpdate : existingProduct.price;
+                    const newCategory = p.category !== undefined ? p.category : existingProduct.category;
+                    const newIngredients = p.ingredients !== undefined ? p.ingredients : existingProduct.ingredients;
+                    
+                    await sql`
+                        UPDATE seller_products 
+                        SET name = ${newName}, 
+                            description = ${newDesc}, 
+                            price = ${newPrice || null}, 
+                            category = ${newCategory}, 
+                            ingredients = ${newIngredients},
+                            updated_at = NOW()
+                        WHERE id = ${existingProduct.id}
+                    `;
+                    
+                    const updatedFields = Object.keys(updates).join(', ');
+                    result.reply = `تم بنجاح حفظ التعديلات (${updatedFields}) للمنتج: ${newName} ✅`;
+                }
+            }
         }
 
         // Save AI Response to DB (including extracted_data as stringified JSON so it can be restored on reload)
