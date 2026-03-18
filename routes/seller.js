@@ -572,18 +572,18 @@ router.post('/ai-confirm-add', requireSeller, async (req, res) => {
     }
 });
 
-// GET products with missing images (For AI Real-time UI)
+// GET all products for image validation (For AI Real-time UI)
+// Returns ALL products so the frontend can test each image URL by actually loading it
 router.get('/missing-images', requireSeller, async (req, res) => {
     try {
-        const missingImageProducts = await sql`
-            SELECT id, name, brand 
+        const allProducts = await sql`
+            SELECT id, name, brand, image_url 
             FROM seller_products 
-            WHERE seller_id = ${req.user.id} 
-              AND (image_url IS NULL OR image_url = '' OR image_url NOT LIKE 'http%')
+            WHERE seller_id = ${req.user.id}
         `;
-        res.json({ success: true, data: missingImageProducts || [] });
+        res.json({ success: true, data: allProducts || [] });
     } catch (err) {
-        console.error('[seller-ai] Error fetching missing images:', err);
+        console.error('[seller-ai] Error fetching products for image check:', err);
         res.status(500).json({ error: 'Failed to fetch products' });
     }
 });
