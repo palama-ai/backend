@@ -468,35 +468,133 @@ router.get('/test-discovery', requireSeller, async (req, res) => {
     }
 });
 
+// ============================================
+// AI Chat History Routes
+// ============================================
+
+// Get all AI chat sessions for the seller
+router.get('/ai/sessions', requireSeller, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const sessions = await sql`
+            SELECT id, title, created_at, updated_at 
+            FROM seller_ai_sessions 
+            WHERE seller_id = ${userId} 
+            ORDER BY updated_at DESC
+        `;
+        res.json({ success: true, sessions });
+    } catch (err) {
+        console.error('[seller-ai] Fetch sessions error:', err);
+        res.status(500).json({ error: 'Failed to fetch sessions' });
+    }
+});
+
+// Get messages for a specific session
+router.get('/ai/sessions/:id', requireSeller, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userId = req.user.id;
+        
+        // Verify ownership
+        const session = await sql`SELECT id FROM seller_ai_sessions WHERE id = ${id} AND seller_id = ${userId}`;
+        if (!session || session.length === 0) {
+            return res.status(404).json({ error: 'Session not found' });
+        }
+
+        const messages = await sql`
+            SELECT id, role, content, extracted_data, image_url, created_at 
+            FROM seller_ai_messages 
+            WHERE session_id = ${id} 
+            ORDER BY created_at ASC
+        `;
+        
+        res.json({ success: true, messages });
+    } catch (err) {
+        console.error('[seller-ai] Fetch session messages error:', err);
+        res.status(500).json({ error: 'Failed to fetch session details' });
+    }
+});
+
+// Delete a session
+router.delete('/ai/sessions/:id', requireSeller, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userId = req.user.id;
+        
+        // Ownership verified by WHERE clause
+        const result = await sql`DELETE FROM seller_ai_sessions WHERE id = ${id} AND seller_id = ${userId} RETURNING id`;
+        
+        if (!result || result.length === 0) {
+            return res.status(404).json({ error: 'Session not found' });
+        }
+        
+        res.json({ success: true, deleted: true });
+    } catch (err) {
+        console.error('[seller-ai] Delete session error:', err);
+        res.status(500).json({ error: 'Failed to delete session' });
+    }
+});
+
 // AI Chatbot for adding products
 router.post('/ai-chat', requireSeller, async (req, res) => {
     try {
-        const { message, history, image, currentState, settings } = req.body;
+        const { message, history, image, currentState, settings, sessionId } = req.body;
         const webAccess = settings?.webAccess !== false; // default true
         const canMakeChanges = settings?.canMakeChanges !== false; // default true
         const model = settings?.model || 'auto';
+        const userId = req.user.id;
         
-        // message: text from user
-        // history: array of previous messages
-        // image: base64 encoded image (optional)
-        // currentState: previously extracted product data from the frontend
+        let activeSessionId = sessionId;
 
+        // If no sessionId is provided, create a new session
+        if (!activeSessionId) {
+            let title = 'New Chat';
+            if (message && message.trim()) {
+                title = message.split(' ').slice(0, 5).join(' ');
+                if (title.length > 50) title = title.substring(0, 50) + '...';
+            } else if (image) {
+                title = 'Image Analysis';
+            }
+
+            const newSession = await sql`
+                INSERT INTO seller_ai_sessions (seller_id, title) 
+                VALUES (${userId}, ${title}) 
+                RETURNING id
+            `;
+            activeSessionId = newSession[0].id;
+        } else {
+            // Update the updated_at timestamp on the session
+            await sql`UPDATE seller_ai_sessions SET updated_at = NOW() WHERE id = ${activeSessionId}`;
+        }
+
+        // Save User Message to DB
+        await sql`
+            INSERT INTO seller_ai_messages (session_id, role, content, image_url) 
+            VALUES (${activeSessionId}, 'user', ${message || ''}, ${image ? 'data:image/... (truncated)' : null})
+        `;
+
+        // Process via AI Agent
         const result = await processConversation(history || [], message, image, currentState, { webAccess, model });
         
-        // --- Block mutating actions when canMakeChanges is OFF ---
+        // Block mutating actions when canMakeChanges is OFF
         if (!canMakeChanges && (result.action === 'EXECUTE_SAVE' || result.action === 'FIX_IMAGES')) {
             result.action = 'CHAT';
             result.reply = '⚠️ "Can make changes" is turned off. Enable it from the options menu to allow me to modify your products.';
         }
 
-        // --- Special Background Action: FIX_IMAGES ---
         if (result.action === 'FIX_IMAGES') {
-            // We no longer do the background task here. The frontend will orchestrate it 
-            // by calling /missing-images and /fix-image endpoints to show real-time progress.
             result.reply = "حسناً! سأقوم الآن بالبحث عن منتجاتك التي لا تحتوي على صور. سأعمل عليها الآن أمامك... 🖼️✨";
         }
 
-        res.json({ success: true, ...result });
+        // Save AI Response to DB (including extracted_data as stringified JSON so it can be restored on reload)
+        const extractedDataStr = result.extracted_info ? JSON.stringify(result.extracted_info) : null;
+        await sql`
+            INSERT INTO seller_ai_messages (session_id, role, content, extracted_data) 
+            VALUES (${activeSessionId}, 'assistant', ${result.reply}, ${extractedDataStr})
+        `;
+
+        // Send response back to frontend (including the sessionId so they can persist it)
+        res.json({ success: true, sessionId: activeSessionId, ...result });
 
     } catch (err) {
         console.error('[seller-ai] Chat error:', err);
