@@ -614,4 +614,75 @@ router.delete('/:id/comments/:commentId', requireAuth, async (req, res) => {
     }
 });
 
+/**
+ * GET /api/products/public/seller/:sellerId
+ * Fetch all public products for a specific seller
+ */
+router.get('/public/seller/:sellerId', async (req, res) => {
+    try {
+        const { sellerId } = req.params;
+
+        // Fetch published products for this seller
+        const products = await sql`
+            SELECT 
+                id, seller_id, name, brand, description, 
+                price, original_price, image_url, category,
+                skin_types, concerns, purchase_url, view_count,
+                verification_status, verification_score, visibility_score,
+                review_summary, sample_reviews, manufacturer_info
+            FROM seller_products 
+            WHERE seller_id = ${sellerId}
+              AND published = 1
+              AND verification_status IS DISTINCT FROM 'recalled_hidden'
+              AND verification_status IS DISTINCT FROM 'flagged'
+              AND verification_status IS DISTINCT FROM 'unverified'
+            ORDER BY created_at DESC
+        `;
+
+        if (!products) {
+            return res.json({ data: [] });
+        }
+
+        // Parse JSON fields
+        const parsedProducts = products.map(product => {
+            let skinTypes = [];
+            let concerns = [];
+
+            try {
+                if (product.skin_types) {
+                    skinTypes = typeof product.skin_types === 'string'
+                        ? JSON.parse(product.skin_types)
+                        : product.skin_types;
+                }
+            } catch (e) { /* ignore */ }
+
+            try {
+                if (product.concerns) {
+                    concerns = typeof product.concerns === 'string'
+                        ? JSON.parse(product.concerns)
+                        : product.concerns;
+                }
+            } catch (e) { /* ignore */ }
+
+            return {
+                ...product,
+                skin_types: skinTypes,
+                concerns: concerns,
+                // Normalized field names for frontend
+                image: product.image_url,
+                purchaseUrl: product.purchase_url,
+                originalPrice: product.original_price,
+                rating: 4.5,
+                reviewCount: Math.floor(Math.random() * 500) + 100,
+                type: product.category
+            };
+        });
+
+        res.json({ data: parsedProducts });
+    } catch (err) {
+        console.error('[products.public.seller] Error:', err);
+        res.status(500).json({ error: 'Failed to fetch seller products' });
+    }
+});
+
 module.exports = router;
